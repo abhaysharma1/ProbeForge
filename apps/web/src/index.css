@@ -1,13 +1,72 @@
+/* biome-ignore-all lint/complexity/noImportantStyles: reduced-motion overrides must beat utility classes */
 @import "tailwindcss";
+
+@theme {
+  --color-pf-background: #f7f7f4;
+  --color-pf-surface: #ffffff;
+  --color-pf-surface-muted: #f0f0eb;
+  --color-pf-surface-hover: #ebebe5;
+  --color-pf-text: #20221f;
+  --color-pf-text-secondary: #666961;
+  --color-pf-text-muted: #898c83;
+  --color-pf-border: #e3e4dc;
+  --color-pf-border-strong: #cfd1c7;
+  --color-pf-accent: #b84a32;
+  --color-pf-accent-hover: #983b28;
+  --color-pf-accent-soft: #f5e9e4;
+  --color-pf-success: #39765b;
+  --color-pf-warning: #a96a17;
+  --color-pf-error: #b42318;
+  --font-sans: "Inter", "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", "JetBrains Mono", ui-monospace, "Cascadia Code", monospace;
+}
 
 @layer base {
   :root {
-    color-scheme: dark;
+    color-scheme: light;
+    font-synthesis: none;
+  }
+
+  html {
+    background: var(--color-pf-background);
   }
 
   body {
     margin: 0;
     min-height: 100vh;
-    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--color-pf-background);
+    color: var(--color-pf-text);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  button,
+  input,
+  select {
+    font: inherit;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-pf-accent);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--color-pf-accent-soft);
+    color: var(--color-pf-text);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
   }
 }

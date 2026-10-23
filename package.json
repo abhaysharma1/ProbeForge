@@ -31,7 +31,8 @@
     "db:migrate": "cargo run -p probe-forge-api --bin migrate",
     "db:test": "bun scripts/db-check.mjs",
     "check:db": "bun scripts/db-check.mjs",
-    "db:reset": "docker compose -f infra/local/compose.yaml down -v && docker compose -f infra/local/compose.yaml up -d --wait"
+    "db:reset": "docker compose -f infra/local/compose.yaml down -v && docker compose -f infra/local/compose.yaml up -d --wait",
+    "user:create": "cargo run -p probe-forge-api --bin create-user --"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.2"

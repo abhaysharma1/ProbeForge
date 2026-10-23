@@ -1,5 +1,6 @@
-// Run the schema migration integration test. A real database is required; the
-// test creates and drops an isolated schema and never touches `public`.
+// Run the schema migration and Phase 3 auth/RBAC integration tests. A real
+// database is required; each test creates and drops an isolated schema and
+// never touches `public`.
 import { spawnSync } from "node:child_process";
 
 const databaseUrl = process.env.DATABASE_URL?.trim();
@@ -12,7 +13,17 @@ if (!databaseUrl) {
 
 const result = spawnSync(
   "cargo",
-  ["test", "-p", "probe-forge-api", "--test", "migrations", "--", "--nocapture"],
+  [
+    "test",
+    "-p",
+    "probe-forge-api",
+    "--test",
+    "migrations",
+    "--test",
+    "auth_projects",
+    "--",
+    "--nocapture",
+  ],
   {
     stdio: "inherit",
     env: {

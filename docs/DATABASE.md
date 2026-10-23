@@ -1,17 +1,16 @@
 # ProbeForge database
 
-PostgreSQL 18.6 is the durable source of truth. Phase 2 introduces the schema,
-migration runner, and schema-isolated migration test. The API, scheduler, and
-execution worker still expose health endpoints only; the first database pool and
-database-aware readiness are wired in Phase 3 (see D-018). The browser never
-connects to PostgreSQL.
+PostgreSQL 18.6 is the durable source of truth. Phase 2 introduced the schema,
+migration runner, and schema-isolated migration test. Phase 3 adds the first API
+database pool, authentication/session tables, project RBAC, and database-aware
+readiness. The browser never connects to PostgreSQL.
 
 ## Local commands
 
 ```bash
 bun run db:up         # start PostgreSQL 18.6 on 127.0.0.1:5432
 bun run db:migrate    # apply forward-only migrations (reads DATABASE_URL)
-bun run check:db      # run the migration integration test (reads DATABASE_URL)
+bun run check:db      # run migration and auth/RBAC integration tests (reads DATABASE_URL)
 bun run db:down       # stop PostgreSQL, keep the volume
 bun run db:reset      # destructive: stop, delete the volume, start empty
 ```
@@ -28,7 +27,7 @@ string. The test runner sets `PROBE_FORGE_REQUIRE_DB_TESTS=1`, so a missing
 Migrations live in `migrations/` and are applied by
 `cargo run -p probe-forge-api --bin migrate`, which uses SQLx's runtime migrator.
 
-- **Forward-only.** Migrations are ordered (`0001` … `0006` today) and are never
+- **Forward-only.** Migrations are ordered (`0001` … `0007` today) and are never
   edited after being applied. Fix a mistake with a new migration.
 - **Do not use `sqlx migrate revert` in shared or production environments.** No
   down migrations are maintained. SQLx records applied versions in
@@ -58,6 +57,7 @@ migrator is idempotent because SQLx skips already-applied versions.
 | `0004_targets.sql` | `targets`, `target_authorizations` | Normalized target origins/scope, immutable authorization scope and limits |
 | `0005_runs.sql` | `load_profiles`, `load_scenarios`, `schedules`, `test_runs`, `test_results`, `evidence`, `run_metrics`, `agent_sessions`, `audit_log` | Bounded load profiles, due schedules, run shape/leases, result/evidence/metric records, append-only audit |
 | `0006_approval_scenarios.sql` | `plan_approvals` | Adds approved load-scenario IDs and allows either test or scenario selections |
+| `0007_auth_sessions.sql` | `users`, `auth_sessions`, `auth_login_attempts` | Argon2id password hash, opaque session-token digests, revocation/expiry indexes, hashed login-rate-limit keys |
 
 Every project-scoped table carries `project_id` and cascades from `projects`
 except where a deliberate restriction preserves approval/authorization history.
@@ -80,6 +80,12 @@ in Phase 4, not in the schema alone.
 
 ## Invariants and immutability
 
+- `users.password_hash` is a nullable Argon2id PHC string. Users without a hash
+  cannot authenticate; passwords are never stored in plaintext.
+- `auth_sessions.token_hash` is exactly 32 bytes (SHA-256). Sessions require
+  `revoked_at IS NULL` and `expires_at > now()`; logout sets `revoked_at`.
+- `auth_login_attempts` stores only SHA-256 digests of account/address or address
+  rate-limit keys, never raw emails or IP addresses.
 - Only `vulnerability_testing` and `load_testing` are legal job goals.
 - `vulnerability_testing` runs require a planned test and no load scenario;
   `load_testing` runs require a scenario and profile and no planned test.
@@ -114,14 +120,23 @@ in Phase 4, not in the schema alone.
    rejected.
 7. Drops the temporary schema.
 
+`services/api/tests/auth_projects.rs` runs against its own isolated schema for
+each test. It applies all migrations, provisions users, and exercises login,
+logout, session revocation, CSRF/origin rejection, rate limiting, project RBAC,
+cross-project denial, and audit writes. It never scans a target or contacts an
+external host.
+
 A failing assertion leaves the temporary schema in place for local inspection.
 Drop it manually or reset the local database after investigating.
 
-## Not in Phase 2
+## Not in Phase 3
 
-- Authentication, project membership APIs, and RBAC enforcement (Phase 3).
-- Database pools, transaction boundaries, queue claims, SSE, and worker leases
-  (Phase 4).
-- Real repository ingestion, target validation, scanning, load generation, and
-  reporting (Phases 5-13).
+- Job creation, atomic queue claiming, SSE, and worker leases (Phase 4).
+- Approval workflows, per-member approval grants, and target validation
+  (Phases 6-10).
+- Real repository ingestion, scanning, load generation, and reporting
+  (Phases 5-13).
+- Hard project deletion/archiving and retention jobs; immutable audit,
+  approval, and evidence triggers intentionally block destructive cascades
+  (D-022).
 - Backups, retention jobs, and production operations (later hardening).

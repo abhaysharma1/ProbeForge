@@ -34,6 +34,7 @@ const REQUIRED_FILES = [
   "docs/DECISION_LOG.md",
   "docs/CONTRACTS.md",
   "docs/DATABASE.md",
+  "docs/AUTH.md",
   "docs/06_frontend_design.md",
   "docs/frontend_design.md",
   "docs/01_what_we_are_developing.md",
@@ -44,6 +45,7 @@ const REQUIRED_FILES = [
   "docs/phases/00_recon_report.md",
   "docs/phases/01_monorepo_report.md",
   "docs/phases/02_contracts_db_report.md",
+  "docs/phases/03_auth_projects_report.md",
   "infra/local/compose.yaml",
   "crates/contracts/Cargo.toml",
   "migrations/0001_identity.sql",
@@ -52,10 +54,13 @@ const REQUIRED_FILES = [
   "migrations/0004_targets.sql",
   "migrations/0005_runs.sql",
   "migrations/0006_approval_scenarios.sql",
+  "migrations/0007_auth_sessions.sql",
   "packages/contracts/schemas/probeforge.v1.schema.json",
   "packages/contracts/fixtures/v1/manifest.json",
   "services/api/src/bin/migrate.rs",
+  "services/api/src/bin/create-user.rs",
   "services/api/tests/migrations.rs",
+  "services/api/tests/auth_projects.rs",
   "scripts/db-check.mjs",
   "scripts/services.mjs",
   "apps/web/package.json",
@@ -70,6 +75,7 @@ const LINKED_DOCS = [
   "docs/IMPLEMENTATION_CHECKLIST.md",
   "docs/CONTRACTS.md",
   "docs/DATABASE.md",
+  "docs/AUTH.md",
 ];
 
 // High-signal patterns only; generic words like "password" appear in policy prose on purpose.

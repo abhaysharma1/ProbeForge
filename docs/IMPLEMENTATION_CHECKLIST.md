@@ -78,25 +78,25 @@ Legend: `[x]` done with evidence - `[ ]` not done.
 
 ## Phase 3 — Authentication, projects, and authorization
 
-**Status:** Not started
+**Status:** Complete (see [phase report](phases/03_auth_projects_report.md))
 
 **Tasks**
 
-- [ ] Implement maintained authentication (established OIDC provider or maintained library; Argon2id if local passwords are supported)
-- [ ] Implement secure session handling, CSRF protection where applicable, login rate limits, logout, and session revocation
-- [ ] Implement projects and project membership roles
-- [ ] Enforce backend authorization for every project-scoped endpoint
-- [ ] Implement audit events for sensitive changes
-- [ ] Use secure cookies and keep long-lived access tokens out of browser storage
-- [ ] Keep secrets out of frontend bundles and logs
-- [ ] Do not expose PostgreSQL to the browser
+- [x] Implement maintained authentication (established OIDC provider or maintained library; Argon2id if local passwords are supported)
+- [x] Implement secure session handling, CSRF protection where applicable, login rate limits, logout, and session revocation
+- [x] Implement projects and project membership roles
+- [x] Enforce backend authorization for every project-scoped endpoint
+- [x] Implement audit events for sensitive changes
+- [x] Use secure cookies and keep long-lived access tokens out of browser storage
+- [x] Keep secrets out of frontend bundles and logs
+- [x] Do not expose PostgreSQL to the browser
 
 **Exit gate**
 
-- [ ] Authentication and project RBAC have automated tests
-- [ ] Cross-project reads and writes are denied
-- [ ] Session invalidation and logout work
-- [ ] No unauthenticated endpoint can create or approve jobs
+- [x] Authentication and project RBAC have automated tests
+- [x] Cross-project reads and writes are denied
+- [x] Session invalidation and logout work
+- [x] No unauthenticated endpoint can create or approve jobs
 
 ## Phase 4 — Job creation and PostgreSQL queue
 

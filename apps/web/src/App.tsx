@@ -1,81 +1,184 @@
-import { JOB_GOALS, type JobGoal } from "@probe-forge/contracts";
+import { useCallback, useEffect, useState } from "react";
+import { ApiError, type AuthUser, getCsrfToken, getSession, login, logout } from "./api";
+import { LoginView } from "./LoginView";
+import { ProjectsView } from "./ProjectsView";
 
-const GOAL_COPY: Record<JobGoal, { readonly title: string; readonly description: string }> = {
-  vulnerability_testing: {
-    title: "Vulnerability testing",
-    description:
-      "Read-only repository analysis proposes security tests from a vetted catalog. You review the plan, select individual tests, and authorize the target before anything runs.",
-  },
-  load_testing: {
-    title: "Load testing",
-    description:
-      "Endpoint-aware scenarios are generated from the repository. You approve the scenario, load profile, schedule, and target before any traffic is sent.",
-  },
-};
+type AuthState =
+  | { readonly status: "loading" }
+  | { readonly status: "signedOut"; readonly csrfToken: string }
+  | { readonly status: "signedIn"; readonly user: AuthUser; readonly csrfToken: string }
+  | { readonly status: "error"; readonly message: string };
+
+function BootScreen({ message }: { readonly message: string }) {
+  return (
+    <main className="grid min-h-screen place-items-center bg-pf-background px-6">
+      <div className="text-center">
+        <span
+          aria-hidden="true"
+          className="mx-auto grid size-10 place-items-center rounded-md bg-pf-accent text-[13px] font-semibold tracking-[0.08em] text-white"
+        >
+          PF
+        </span>
+        <p role="status" className="mt-4 text-[13px] text-pf-text-secondary">
+          {message}
+        </p>
+      </div>
+    </main>
+  );
+}
 
 export default function App() {
-  return (
-    <div className="flex min-h-screen flex-col bg-slate-950 text-slate-100">
-      <header className="border-b border-slate-800/80 bg-slate-950/80">
-        <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center justify-between gap-4 px-6 py-6">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-white">ProbeForge</h1>
-            <p className="mt-1 text-sm text-slate-400">
-              AI-planned, approval-gated security and load testing.
-            </p>
-          </div>
-          <span className="rounded-full border border-cyan-500/40 bg-cyan-500/10 px-3 py-1 text-xs font-medium text-cyan-300">
-            Phase 1 &middot; local skeleton
-          </span>
-        </div>
-      </header>
+  const [auth, setAuth] = useState<AuthState>({ status: "loading" });
+  const [bootAttempt, setBootAttempt] = useState(0);
 
-      <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-12">
-        <section aria-labelledby="goals-heading">
-          <h2
-            id="goals-heading"
-            className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400"
+  // biome-ignore lint/correctness/useExhaustiveDependencies: bootAttempt is the explicit retry key
+  useEffect(() => {
+    let cancelled = false;
+    async function boot() {
+      try {
+        const session = await getSession();
+        if (!cancelled) {
+          setAuth({
+            status: "signedIn",
+            user: session.user,
+            csrfToken: session.csrfToken,
+          });
+        }
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        if (error instanceof ApiError && error.status === 401) {
+          try {
+            const csrfToken = await getCsrfToken();
+            if (!cancelled) {
+              setAuth({ status: "signedOut", csrfToken });
+            }
+          } catch {
+            if (!cancelled) {
+              setAuth({
+                status: "error",
+                message: "ProbeForge could not reach the API. Check that the local API is running.",
+              });
+            }
+          }
+          return;
+        }
+        setAuth({
+          status: "error",
+          message: "ProbeForge could not reach the API. Check that the local API is running.",
+        });
+      }
+    }
+    void boot();
+    return () => {
+      cancelled = true;
+    };
+  }, [bootAttempt]);
+
+  const handleLogin = async (email: string, password: string) => {
+    if (auth.status !== "signedOut") {
+      return;
+    }
+    let csrfToken = auth.csrfToken;
+    if (csrfToken === "") {
+      csrfToken = await getCsrfToken();
+    }
+
+    let result: Awaited<ReturnType<typeof login>>;
+    try {
+      result = await login(email, password, csrfToken);
+    } catch (error) {
+      if (
+        error instanceof ApiError &&
+        error.status === 403 &&
+        (error.code === "csrf_invalid" || error.code === "csrf_required")
+      ) {
+        csrfToken = await getCsrfToken();
+        result = await login(email, password, csrfToken);
+      } else {
+        throw error;
+      }
+    }
+
+    setAuth({
+      status: "signedIn",
+      user: result.user,
+      csrfToken: result.csrfToken,
+    });
+  };
+
+  const handleSignOut = async () => {
+    if (auth.status === "signedIn") {
+      try {
+        await logout(auth.csrfToken);
+      } catch {
+        // The session may already be expired or revoked; local sign-out still applies.
+      }
+    }
+    try {
+      const csrfToken = await getCsrfToken();
+      setAuth({ status: "signedOut", csrfToken });
+    } catch {
+      setAuth({ status: "signedOut", csrfToken: "" });
+    }
+  };
+
+  const handleSessionExpired = useCallback(() => {
+    void getCsrfToken()
+      .then((csrfToken) => {
+        setAuth({ status: "signedOut", csrfToken });
+      })
+      .catch(() => {
+        setAuth({ status: "signedOut", csrfToken: "" });
+      });
+  }, []);
+
+  if (auth.status === "loading") {
+    return <BootScreen message="Checking your session..." />;
+  }
+
+  if (auth.status === "error") {
+    return (
+      <main className="grid min-h-screen place-items-center bg-pf-background px-6">
+        <div className="w-full max-w-md rounded-lg border border-pf-border bg-pf-surface p-6 text-center">
+          <span
+            aria-hidden="true"
+            className="mx-auto grid size-9 place-items-center rounded-md bg-pf-accent text-[12px] font-semibold tracking-[0.08em] text-white"
           >
-            Two job goals
-          </h2>
-          <div className="mt-5 grid gap-5 md:grid-cols-2">
-            {JOB_GOALS.map((goal) => (
-              <article
-                key={goal}
-                className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 shadow-lg shadow-slate-950/40"
-              >
-                <h3 className="text-lg font-semibold text-white">{GOAL_COPY[goal].title}</h3>
-                <code className="mt-2 inline-block rounded bg-slate-800 px-2 py-1 text-xs text-cyan-300">
-                  {goal}
-                </code>
-                <p className="mt-4 text-sm leading-6 text-slate-300">
-                  {GOAL_COPY[goal].description}
-                </p>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section
-          aria-labelledby="safety-heading"
-          className="mt-10 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-6"
-        >
-          <h2 id="safety-heading" className="text-sm font-semibold text-amber-200">
-            Safety boundary
-          </h2>
-          <p className="mt-2 text-sm leading-6 text-slate-300">
-            Nothing runs without explicit plan approval and target authorization. Repository
-            analysis never executes project code, installs dependencies, or starts the inspected
-            application.
+            PF
+          </span>
+          <h1 className="mt-4 text-[20px] font-semibold tracking-[-0.015em]">
+            API connection unavailable
+          </h1>
+          <p role="alert" className="mt-2 text-[13px] leading-5 text-pf-text-secondary">
+            {auth.message}
           </p>
-        </section>
+          <button
+            type="button"
+            onClick={() => {
+              setAuth({ status: "loading" });
+              setBootAttempt((attempt) => attempt + 1);
+            }}
+            className="mt-5 h-9 rounded-md bg-pf-accent px-4 text-[12px] font-medium text-white transition-colors hover:bg-pf-accent-hover"
+          >
+            Retry
+          </button>
+        </div>
       </main>
+    );
+  }
 
-      <footer className="border-t border-slate-800/80 px-6 py-5">
-        <p className="mx-auto max-w-5xl text-xs text-slate-500">
-          ProbeForge &middot; Phase 1 scaffold &middot; this page does not execute tests.
-        </p>
-      </footer>
-    </div>
+  if (auth.status === "signedOut") {
+    return <LoginView onLogin={handleLogin} />;
+  }
+
+  return (
+    <ProjectsView
+      user={auth.user}
+      csrfToken={auth.csrfToken}
+      onSignOut={handleSignOut}
+      onSessionExpired={handleSessionExpired}
+    />
   );
 }

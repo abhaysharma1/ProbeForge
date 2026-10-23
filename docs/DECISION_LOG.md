@@ -191,6 +191,26 @@ Format per decision: status, context, decision, rationale, alternatives, impact.
 - **Alternatives:** SQLx offline mode (no runtime DB test); a dedicated test database container (more infrastructure); editing migrations in place (unsafe for existing data).
 - **Impact:** Production rollback is restore/forward-fix, not `migrate revert`. The local `db:reset` command is explicitly destructive.
 
+### D-021 - Local Argon2id authentication with opaque server-side sessions
+
+- **Date:** 2026-10-23
+- **Status:** Accepted
+- **Context:** Phase 3 requires maintained authentication, secure sessions, CSRF protection, login rate limiting, logout, session revocation, secure cookies, and no long-lived tokens in browser storage. No OIDC provider or external identity service exists for local development.
+- **Decision:** Use local email/password authentication with the maintained RustCrypto `argon2` 0.5.3 crate and Argon2id PHC hashes. Issue 256-bit opaque session tokens, store only SHA-256 digests in `auth_sessions`, and deliver the token in an `HttpOnly`, `SameSite=Strict` cookie that is `Secure` by default. Use a double-submit CSRF cookie/header pair, `Sec-Fetch-Site`/exact-origin checks for unsafe requests, database-backed login rate limits keyed by hashed account/address and address, and operator-only account provisioning. There is no public registration endpoint.
+- **Rationale:** Argon2id is the recommended password KDF; opaque server-side sessions allow immediate revocation without a JWT blocklist. HttpOnly cookies plus CSRF protection keep credentials out of JavaScript-accessible storage. Database-backed limits survive process restarts and work across replicas.
+- **Alternatives:** OIDC (no provider available for local development); JWT access tokens (harder to revoke, tempting to store in browser storage); in-memory rate limits (lost on restart, not shared).
+- **Impact:** `PROBE_FORGE_COOKIE_SECURE` defaults to `true`; local HTTP development must explicitly set it to `false`. A trusted reverse-proxy client-IP design is still required before per-IP limits are meaningful behind a proxy. MFA and password reset are deferred. See `docs/AUTH.md`.
+
+### D-022 - Hard project deletion deferred behind immutable evidence records
+
+- **Date:** 2026-10-23
+- **Status:** Accepted (temporary)
+- **Context:** Phase 3 lists project management, but Phase 2 deliberately made `audit_log`, `plan_approvals`, `evidence`, and `job_events` append-only with update/delete rejection triggers. A hard `DELETE /api/projects/{id}` cascades into project-scoped tables and is blocked once those records exist.
+- **Decision:** Phase 3 exposes project create/read/update, membership management, ownership transfer, and audit viewing. Hard deletion is not implemented. Do not weaken the immutable-record triggers to enable cascading deletes.
+- **Rationale:** Audit and evidence integrity outranks a destructive convenience endpoint. Removing history to satisfy a delete request would undermine the product's evidence guarantees.
+- **Alternatives:** Soft delete/archive with a retention workflow (needs its own phase design); cascade exceptions for admin deletion (weakens immutable evidence); no project deletion at all (current).
+- **Impact:** Projects accumulate until an explicit archive/retention design is approved. The frontend has no delete control, and the integration tests do not assert deletion. Revisit before a user-facing project lifecycle feature is required.
+
 ## Open questions
 
 | ID | Question | Needed by | Notes |

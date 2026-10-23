@@ -53,7 +53,8 @@ const SERVICES = [
     name: "api",
     command: binary("probe-forge-api"),
     args: [],
-    health: { url: `http://${apiAddr}/healthz`, kind: "json" },
+    // Database-aware readiness, not just process liveness.
+    health: { url: `http://${apiAddr}/readyz`, kind: "json", status: "ready" },
   },
   {
     name: "scheduler",
@@ -177,7 +178,7 @@ async function waitForHealthy(service, timeoutMs = 60_000) {
       if (response.ok) {
         if (service.health.kind === "json") {
           const body = await response.json();
-          if (body.status === "ok") return;
+          if (body.status === (service.health.status ?? "ok")) return;
         } else {
           const text = await response.text();
           if (text.includes("ProbeForge")) return;

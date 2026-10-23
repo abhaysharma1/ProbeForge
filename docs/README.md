@@ -29,6 +29,7 @@ Do not resolve a genuine conflict silently. Choose the safest minimal interpreta
 | [DECISION_LOG.md](DECISION_LOG.md) | Decisions, interpretations, deferred choices, open questions |
 | [CONTRACTS.md](CONTRACTS.md) | Versioned API/agent contracts, limits, fixtures, and cross-language validation |
 | [DATABASE.md](DATABASE.md) | Schema map, migration policy, local commands, and database invariants |
+| [AUTH.md](AUTH.md) | Authentication, sessions, CSRF, project roles, API surface, and security limitations |
 | [phases/](phases/) | One completion report per phase |
 
 ## Phase reports
@@ -38,6 +39,7 @@ Do not resolve a genuine conflict silently. Choose the safest minimal interpreta
 | 0 | [00_recon_report.md](phases/00_recon_report.md) |
 | 1 | [01_monorepo_report.md](phases/01_monorepo_report.md) |
 | 2 | [02_contracts_db_report.md](phases/02_contracts_db_report.md) |
+| 3 | [03_auth_projects_report.md](phases/03_auth_projects_report.md) |
 
 `docs/frontend_design.md` is an alias that points to the canonical
 [06_frontend_design.md](06_frontend_design.md), because the agent instructions

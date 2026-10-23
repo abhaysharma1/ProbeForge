@@ -30,6 +30,9 @@ tmp/
 *.sqlite3
 *.db
 
+# Local CodeGraph index (generated, not part of the product)
+.codegraph/
+
 # OS / editor noise
 .DS_Store
 Thumbs.db

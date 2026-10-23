@@ -121,6 +121,8 @@ async fn migrations_create_and_enforce_core_schema() {
         "run_metrics",
         "agent_sessions",
         "audit_log",
+        "auth_sessions",
+        "auth_login_attempts",
     ] {
         assert!(
             tables.iter().any(|table| table == expected),
@@ -146,6 +148,8 @@ async fn migrations_create_and_enforce_core_schema() {
         "test_runs_lease_idx",
         "test_results_run_idx",
         "run_metrics_run_time_idx",
+        "auth_sessions_user_created_idx",
+        "auth_login_attempts_last_attempt_idx",
     ] {
         assert!(
             indexes.iter().any(|index| index == expected),
@@ -165,6 +169,20 @@ async fn migrations_create_and_enforce_core_schema() {
     assert_eq!(
         approval_scenario_columns, 1,
         "migration 0006 did not add approved_load_scenario_ids"
+    );
+
+    let password_hash_columns: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM information_schema.columns
+         WHERE table_schema = current_schema()
+           AND table_name = 'users'
+           AND column_name = 'password_hash'",
+    )
+    .fetch_one(&schema_pool)
+    .await
+    .expect("password column inventory failed");
+    assert_eq!(
+        password_hash_columns, 1,
+        "migration 0007 did not add users.password_hash"
     );
 
     seed_complete_fixture(&schema_pool).await;
