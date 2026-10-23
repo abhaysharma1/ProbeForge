@@ -85,9 +85,9 @@ const PLAN: JobPlan = {
         timeoutSeconds: 30,
         evidenceExpectations: ["Response headers and observation timestamp"],
         requiresExplicitConfirmation: false,
-        available: false,
+        available: true,
         availabilityNote:
-          "Execution adapter is not implemented yet. Approval records the selected test; it does not start a run.",
+          "A vetted native adapter exists for this catalog ID; run creation is not wired yet.",
       },
     },
     {

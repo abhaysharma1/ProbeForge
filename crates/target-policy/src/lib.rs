@@ -19,7 +19,7 @@ use std::{
 use probeforge_contracts::{
     Environment, TargetLimits, TargetScope, validate_target_limits, validate_target_scope,
 };
-use reqwest::header::LOCATION;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, LOCATION};
 use thiserror::Error;
 use tokio::{
     net::lookup_host,
@@ -746,6 +746,8 @@ pub enum TargetRequestError {
     Network,
     #[error("request destination is not allowed")]
     Validation(TargetValidationError),
+    #[error("request headers are not allowed")]
+    InvalidHeader,
 }
 
 impl TargetRequestError {
@@ -758,6 +760,7 @@ impl TargetRequestError {
             Self::Cancelled => "cancelled",
             Self::Network => "network_error",
             Self::Validation(error) => error.code(),
+            Self::InvalidHeader => "invalid_adapter_header",
         }
     }
 }
@@ -940,6 +943,41 @@ pub struct GuardedResponse {
     pub redirects: usize,
 }
 
+const SENSITIVE_HEADERS: &[&str] = &[
+    "authorization",
+    "cookie",
+    "proxy-authorization",
+    "set-cookie",
+    "host",
+    "content-length",
+    "transfer-encoding",
+    "connection",
+];
+
+fn sanitize_headers(headers: &HeaderMap) -> Result<HeaderMap, TargetRequestError> {
+    if headers.len() > 20 {
+        return Err(TargetRequestError::InvalidHeader);
+    }
+    let mut sanitized = HeaderMap::new();
+    for (name, value) in headers {
+        let name_lower = name.as_str().to_ascii_lowercase();
+        if SENSITIVE_HEADERS.contains(&name_lower.as_str()) {
+            return Err(TargetRequestError::InvalidHeader);
+        }
+        if value.as_bytes().len() > 1_024
+            || value.as_bytes().iter().any(|byte| byte.is_ascii_control())
+        {
+            return Err(TargetRequestError::InvalidHeader);
+        }
+        let name = HeaderName::from_bytes(name.as_str().as_bytes())
+            .map_err(|_| TargetRequestError::InvalidHeader)?;
+        let value = HeaderValue::from_bytes(value.as_bytes())
+            .map_err(|_| TargetRequestError::InvalidHeader)?;
+        sanitized.append(name, value);
+    }
+    Ok(sanitized)
+}
+
 pub struct GuardedHttpClient {
     policy: TargetPolicy,
     resolver: Arc<dyn TargetResolver>,
@@ -956,7 +994,20 @@ impl GuardedHttpClient {
         url: &Url,
         budget: &RunBudget,
     ) -> Result<GuardedResponse, TargetRequestError> {
-        self.execute(guard, SafeMethod::Get, url, budget).await
+        self.get_with_headers(guard, url, &HeaderMap::new(), budget)
+            .await
+    }
+
+    pub async fn get_with_headers(
+        &self,
+        guard: &TargetGuard,
+        url: &Url,
+        headers: &HeaderMap,
+        budget: &RunBudget,
+    ) -> Result<GuardedResponse, TargetRequestError> {
+        let headers = sanitize_headers(headers)?;
+        self.execute(guard, SafeMethod::Get, url, &headers, budget)
+            .await
     }
 
     pub async fn head(
@@ -965,7 +1016,8 @@ impl GuardedHttpClient {
         url: &Url,
         budget: &RunBudget,
     ) -> Result<GuardedResponse, TargetRequestError> {
-        self.execute(guard, SafeMethod::Head, url, budget).await
+        self.execute(guard, SafeMethod::Head, url, &HeaderMap::new(), budget)
+            .await
     }
 
     async fn execute(
@@ -973,6 +1025,7 @@ impl GuardedHttpClient {
         guard: &TargetGuard,
         method: SafeMethod,
         url: &Url,
+        headers: &HeaderMap,
         budget: &RunBudget,
     ) -> Result<GuardedResponse, TargetRequestError> {
         let remaining = budget.remaining();
@@ -981,7 +1034,7 @@ impl GuardedHttpClient {
         }
         tokio::time::timeout(
             remaining,
-            self.execute_redirects(guard, method, url, budget),
+            self.execute_redirects(guard, method, url, headers, budget),
         )
         .await
         .map_err(|_| TargetRequestError::DurationExceeded)?
@@ -992,6 +1045,7 @@ impl GuardedHttpClient {
         guard: &TargetGuard,
         method: SafeMethod,
         url: &Url,
+        headers: &HeaderMap,
         budget: &RunBudget,
     ) -> Result<GuardedResponse, TargetRequestError> {
         let mut current = url.clone();
@@ -1018,7 +1072,9 @@ impl GuardedHttpClient {
                 builder = builder.resolve_to_addrs(&resolved.host, &addresses);
             }
             let client = builder.build().map_err(|_| TargetRequestError::Network)?;
-            let request = client.request(method.as_reqwest(), current.clone());
+            let request = client
+                .request(method.as_reqwest(), current.clone())
+                .headers(headers.clone());
             let response = tokio::select! {
                 _ = budget.cancelled() => return Err(TargetRequestError::Cancelled),
                 result = request.send() => result.map_err(|_| TargetRequestError::Network)?,
@@ -1385,6 +1441,36 @@ mod tests {
             short.acquire().await,
             Err(TargetRequestError::DurationExceeded)
         ));
+    }
+
+    #[test]
+    fn rejects_credential_and_hop_by_hop_request_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            reqwest::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer secret"),
+        );
+        assert!(matches!(
+            sanitize_headers(&headers),
+            Err(TargetRequestError::InvalidHeader)
+        ));
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            reqwest::header::COOKIE,
+            HeaderValue::from_static("session=secret"),
+        );
+        assert!(matches!(
+            sanitize_headers(&headers),
+            Err(TargetRequestError::InvalidHeader)
+        ));
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            reqwest::header::ORIGIN,
+            HeaderValue::from_static("https://probe.invalid"),
+        );
+        assert!(sanitize_headers(&headers).is_ok());
     }
 
     #[tokio::test]

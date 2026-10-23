@@ -17,6 +17,7 @@ cookie.workspace = true
 futures-core.workspace = true
 getrandom.workspace = true
 probeforge-contracts.workspace = true
+probe-forge-execution-adapters.workspace = true
 probe-forge-queue.workspace = true
 probe-forge-target-policy.workspace = true
 rpassword.workspace = true

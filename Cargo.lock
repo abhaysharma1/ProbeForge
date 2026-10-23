@@ -1265,6 +1265,7 @@ dependencies = [
  "cookie",
  "futures-core",
  "getrandom 0.3.4",
+ "probe-forge-execution-adapters",
  "probe-forge-queue",
  "probe-forge-target-policy",
  "probeforge-contracts",
@@ -1283,6 +1284,19 @@ dependencies = [
  "url",
  "uuid",
  "zeroize",
+]
+
+[[package]]
+name = "probe-forge-execution-adapters"
+version = "0.1.0"
+dependencies = [
+ "probe-forge-target-policy",
+ "probeforge-contracts",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "url",
 ]
 
 [[package]]

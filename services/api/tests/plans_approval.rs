@@ -325,7 +325,7 @@ async fn plan_review_exposes_catalog_metadata_and_tenant_boundaries() {
     let tests = response.body["plannedTests"].as_array().expect("tests");
     assert_eq!(tests.len(), 2);
     assert_eq!(tests[0]["catalogTestId"], "http.headers.missing");
-    assert_eq!(tests[0]["catalog"]["available"], false);
+    assert_eq!(tests[0]["catalog"]["available"], true);
     assert!(tests[0]["catalog"]["availabilityNote"].is_string());
     assert_eq!(tests[1]["catalog"]["available"], false);
     assert_eq!(tests[1]["requiresExplicitConfirmation"], true);
@@ -371,13 +371,29 @@ async fn plan_review_exposes_catalog_metadata_and_tenant_boundaries() {
         .await;
     assert_eq!(response.status, StatusCode::OK, "{:?}", response.body);
     assert_eq!(response.body["catalogVersion"], "0.2.0");
-    assert!(
-        response.body["entries"]
-            .as_array()
-            .expect("catalog entries")
-            .iter()
-            .all(|entry| entry["available"] == false)
-    );
+    let entries = response.body["entries"]
+        .as_array()
+        .expect("catalog entries");
+    let headers = entries
+        .iter()
+        .find(|entry| entry["id"] == "http.headers.missing")
+        .expect("headers catalog entry");
+    assert_eq!(headers["available"], true);
+    let cors = entries
+        .iter()
+        .find(|entry| entry["id"] == "http.cors.misconfiguration")
+        .expect("cors catalog entry");
+    assert_eq!(cors["available"], true);
+    let secrets = entries
+        .iter()
+        .find(|entry| entry["id"] == "static.secrets.exposure")
+        .expect("secrets catalog entry");
+    assert_eq!(secrets["available"], false);
+    let load = entries
+        .iter()
+        .find(|entry| entry["id"] == "load.baseline")
+        .expect("load catalog entry");
+    assert_eq!(load["available"], false);
 }
 
 #[tokio::test]

@@ -31,11 +31,14 @@ and validates the same bounds.
 
 ### Adapter availability
 
-Phase 10 owns execution adapters. The API therefore reports every catalog entry
-as `available: false` with an explicit note. Entry availability is computed from
-an adapter allowlist, not from model output or repository text. Users may still
+Phase 10 owns execution adapters. The API reports `available: true` only for
+catalog IDs with a vetted adapter in the shared `execution-adapters` registry.
+Initially that is `http.headers.missing` and `http.cors.misconfiguration`
+(`http_probe` 0.1.0). Every other entry reports `available: false` with an
+explicit note. Entry availability is computed from the registry, not from model
+output, repository text, or a shared tool-requirement string. Users may still
 select catalog-supported tests and record an approval; approval does not start a
-run.
+run, and run creation/dispatch remains deferred.
 
 ## API surface
 

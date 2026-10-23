@@ -23,10 +23,8 @@ const MAX_TARGET_REQUIREMENT_LENGTH: usize = 300;
 const MAX_EVIDENCE_EXPECTATION_LENGTH: usize = 500;
 const MAX_TIMEOUT_SECONDS: i32 = 3_600;
 
-/// Execution adapters are not implemented until Phase 10. Keeping this list
-/// empty makes the API report every catalog entry as unavailable instead of
-/// pretending that approval can run it.
-const AVAILABLE_TOOL_REQUIREMENTS: &[&str] = &[];
+const AVAILABLE_NOTE: &str =
+    "A vetted native adapter exists for this catalog ID; run creation is not wired yet.";
 const UNAVAILABLE_NOTE: &str = "Execution adapter is not implemented yet. Approval records the selected test; it does not start a run.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -206,10 +204,7 @@ fn validate_catalog(catalog: &TestCatalog) -> Result<(), String> {
 }
 
 fn is_entry_available(entry: &CatalogEntry) -> bool {
-    entry
-        .tool_requirements
-        .iter()
-        .all(|requirement| AVAILABLE_TOOL_REQUIREMENTS.contains(&requirement.as_str()))
+    probe_forge_execution_adapters::is_supported(&entry.id)
 }
 
 fn to_dto(entry: &CatalogEntry) -> CatalogEntryDto {
@@ -227,7 +222,11 @@ fn to_dto(entry: &CatalogEntry) -> CatalogEntryDto {
         evidence_expectations: entry.evidence_expectations.clone(),
         requires_explicit_confirmation: entry.requires_explicit_confirmation,
         available,
-        availability_note: (!available).then(|| UNAVAILABLE_NOTE.to_owned()),
+        availability_note: Some(if available {
+            AVAILABLE_NOTE.to_owned()
+        } else {
+            UNAVAILABLE_NOTE.to_owned()
+        }),
     }
 }
 
@@ -289,14 +288,37 @@ mod tests {
     }
 
     #[test]
-    fn embedded_catalog_exposes_unavailable_tools_honestly() {
+    fn embedded_catalog_reports_adapter_availability_honestly() {
         let dto = catalog_dto().expect("catalog dto");
-        assert!(dto.entries.iter().all(|entry| !entry.available));
-        assert!(
-            dto.entries
-                .iter()
-                .all(|entry| entry.availability_note.as_deref() == Some(UNAVAILABLE_NOTE))
-        );
+        let headers = dto
+            .entries
+            .iter()
+            .find(|entry| entry.id == "http.headers.missing")
+            .expect("headers entry");
+        assert!(headers.available);
+        assert_eq!(headers.availability_note.as_deref(), Some(AVAILABLE_NOTE));
+
+        let cors = dto
+            .entries
+            .iter()
+            .find(|entry| entry.id == "http.cors.misconfiguration")
+            .expect("cors entry");
+        assert!(cors.available);
+
+        for entry in &dto.entries {
+            if entry.id == "http.headers.missing" || entry.id == "http.cors.misconfiguration" {
+                continue;
+            }
+            assert!(!entry.available, "{} should be unavailable", entry.id);
+            assert_eq!(entry.availability_note.as_deref(), Some(UNAVAILABLE_NOTE));
+        }
+
+        for supported in probe_forge_execution_adapters::supported_catalog_ids() {
+            assert!(
+                dto.entries.iter().any(|entry| entry.id == supported),
+                "adapter {supported} is not present in the catalog"
+            );
+        }
         assert_eq!(
             find_entry("http.headers.missing")
                 .expect("catalog lookup")

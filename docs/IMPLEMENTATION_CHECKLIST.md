@@ -264,26 +264,35 @@ Legend: `[x]` done with evidence - `[ ]` not done.
 
 ## Phase 10 — Security execution adapters
 
-**Status:** Not started
+**Status:** Complete - [report](phases/10_execution_adapters_report.md)
 
 **Tasks**
 
-- [ ] Choose a small, vetted first set of tools with structured output
-- [ ] Pin tool versions and maintain catalog-to-adapter mappings
-- [ ] Run tools using fixed executable paths and typed argument builders, never string concatenation
-- [ ] Apply timeouts, output caps, process limits, and cancellation that kills child processes
-- [ ] Restrict target and redirect scope at the runner/network layer
-- [ ] Normalize results into a common result schema
-- [ ] Separate execution status from security outcome
-- [ ] Store sanitized evidence and redact secrets
-- [ ] Use mock adapters and safe local fixtures for tests
+- [x] Choose a small, vetted first set of tools with structured output - two native HTTP adapters (`http_probe` 0.1.0)
+- [x] Pin tool versions and maintain catalog-to-adapter mappings - `crates/execution-adapters` registry
+- [x] Run tools using fixed executable paths and typed argument builders, never string concatenation - N/A for the shipped native adapters: they run in-process and execute no external/child process; configuration is typed and unknown fields are rejected. Future external adapters must use fixed paths and typed argument vectors.
+- [x] Apply timeouts, output caps, process limits, and cancellation that kills child processes - 30 s adapter timeout, guarded-client response/total-byte caps, run-budget cancellation; process limits and child termination are N/A because no child process exists.
+- [x] Restrict target and redirect scope at the runner/network layer - reused `GuardedHttpClient`/`validate_request_url`
+- [x] Normalize results into a common result schema - `AdapterResult`
+- [x] Separate execution status from security outcome - independent enums
+- [x] Store sanitized evidence and redact secrets - sanitized evidence is returned in the result; durable persistence is Phase 13. Bodies, cookies, and arbitrary headers are excluded.
+- [x] Use mock adapters and safe local fixtures for tests - loopback mock HTTP server only
 
 **Exit gate**
 
-- [ ] Each adapter has schema, timeout, cancellation, and output-normalization tests
-- [ ] Unsupported test IDs fail closed
-- [ ] No arbitrary shell execution is possible through agent input
-- [ ] Real-target scans remain disabled during development
+- [x] Each adapter has schema, timeout, cancellation, and output-normalization tests
+- [x] Unsupported test IDs fail closed
+- [x] No arbitrary shell execution is possible through agent input - no shell/process path exists; unknown `command` configuration is rejected
+- [x] Real-target scans remain disabled during development - no run/dispatch endpoint; tests use loopback only
+
+**Evidence**
+
+- Adapter registry and implementations: `crates/execution-adapters/src/lib.rs`
+- Guarded request-header support: `crates/target-policy/src/lib.rs`
+- API availability: `services/api/src/catalog.rs`, `services/api/tests/plans_approval.rs`
+- Tests: 6 adapter tests, 8 target-policy tests, 27 API unit tests, 5 plan approval integration tests, full `cargo test --workspace`
+- UI: plan-review fixture reflects the two available adapters; no execution UI exists
+- Report: `docs/phases/10_execution_adapters_report.md`; design: `docs/EXECUTION_ADAPTERS.md`; decision D-031
 
 ## Phase 11 — Load scenario generation and validation
 
