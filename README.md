@@ -11,12 +11,12 @@ The AI agent (Pi) inspects a pinned commit of the user's repository and proposes
 
 ## Status
 
-**Phase 10 - Security execution adapters: complete.** See the [phase report](docs/phases/10_execution_adapters_report.md).
+**Phase 11 - Load scenario generation and validation: complete.** See the [phase report](docs/phases/11_load_scenarios_report.md).
 
-- Next permitted phase: **Phase 11 - Load scenario generation and validation** (starts only after explicit authorization).
+- Next permitted phase: **Phase 12 - Load runner and scheduler** (starts only after explicit authorization).
 - Phase tasks and exit gates: [docs/IMPLEMENTATION_CHECKLIST.md](docs/IMPLEMENTATION_CHECKLIST.md)
 - Decisions, interpretations, and open questions: [docs/DECISION_LOG.md](docs/DECISION_LOG.md)
-- Contract details: [docs/CONTRACTS.md](docs/CONTRACTS.md) · Database details: [docs/DATABASE.md](docs/DATABASE.md) · Authentication and RBAC: [docs/AUTH.md](docs/AUTH.md) · Jobs and queue: [docs/JOBS.md](docs/JOBS.md) · Read-only ingestion: [docs/REPOSITORY_INGESTION.md](docs/REPOSITORY_INGESTION.md) · Static discovery: [docs/DISCOVERY.md](docs/DISCOVERY.md) · Pi planning: [docs/PLANNING.md](docs/PLANNING.md) · Plan approval: [docs/PLAN_APPROVAL.md](docs/PLAN_APPROVAL.md) · Target validation: [docs/TARGET_VALIDATION.md](docs/TARGET_VALIDATION.md) · Execution adapters: [docs/EXECUTION_ADAPTERS.md](docs/EXECUTION_ADAPTERS.md)
+- Contract details: [docs/CONTRACTS.md](docs/CONTRACTS.md) · Database details: [docs/DATABASE.md](docs/DATABASE.md) · Authentication and RBAC: [docs/AUTH.md](docs/AUTH.md) · Jobs and queue: [docs/JOBS.md](docs/JOBS.md) · Read-only ingestion: [docs/REPOSITORY_INGESTION.md](docs/REPOSITORY_INGESTION.md) · Static discovery: [docs/DISCOVERY.md](docs/DISCOVERY.md) · Pi planning: [docs/PLANNING.md](docs/PLANNING.md) · Plan approval: [docs/PLAN_APPROVAL.md](docs/PLAN_APPROVAL.md) · Target validation: [docs/TARGET_VALIDATION.md](docs/TARGET_VALIDATION.md) · Execution adapters: [docs/EXECUTION_ADAPTERS.md](docs/EXECUTION_ADAPTERS.md) · Load scenarios: [docs/LOAD_SCENARIOS.md](docs/LOAD_SCENARIOS.md)
 - Phase reports: [docs/phases/](docs/phases/)
 
 ## Architecture at a glance
@@ -58,7 +58,7 @@ crates/queue/              Shared PostgreSQL job/run queue, leases, fences, retr
 crates/target-policy/      Shared target URL/DNS/IP, redirect, request-budget, and guarded HTTP policy
 packages/contracts/        JSON Schema, TS contracts, Ajv validators, shared fixtures
 packages/test-catalog/     Versioned, non-executable test catalog (schema 1, catalog 0.2.0)
-migrations/                Forward-only PostgreSQL migrations (0001-0010)
+migrations/                Forward-only PostgreSQL migrations (0001-0011)
 infra/local/               Docker Compose for local PostgreSQL
 scripts/                   Repository contract check, database check, and local service runner
 docs/                      Normative project documents, contracts/database docs, and phase reports
@@ -85,7 +85,7 @@ cp .env.example .env            # PowerShell: Copy-Item .env.example .env
 bun run db:up                   # start PostgreSQL 18.6 (loopback only)
 # export DATABASE_URL with the same password (see .env.example)
 # PowerShell: $env:DATABASE_URL = "postgres://probeforge:<password>@127.0.0.1:5432/probeforge"
-bun run db:migrate              # apply the schema through migration 0010
+bun run db:migrate              # apply the schema through migration 0011
 bun run user:create -- owner@example.test "Owner"   # prompts for the password
 bun run build:rust              # build the Rust workspace
 bun run dev                     # start all five local services (DATABASE_URL required)
@@ -119,7 +119,7 @@ Stop PostgreSQL with `bun run db:down`.
 
 `check:db` creates random temporary schemas and never touches `public`. It fails if `DATABASE_URL` is missing instead of silently skipping. `check:services` requires a prior `bun run build:rust`, a reachable migrated database, `DATABASE_URL`, and free loopback ports; the API and scheduler readiness endpoints now verify database state. Neither contacts external targets. CI is not configured yet; the documented local checks are the gate until a Git remote exists (decision D-011).
 
-## Phase 5-10 scope and current limitations
+## Phase 5-11 scope and current limitations
 
 - Read-only Git ingestion is implemented as an analysis-worker library and operator CLI (`bun run --cwd services/analysis-worker ingest -- ...`). It is not an HTTP endpoint and is not wired to the job queue or PostgreSQL yet.
 - Supported remote transports are HTTPS with HTTP basic credentials and SSH with an unencrypted private-key secret reference. `file:` is accepted only through explicit local-fixture mode. Hosts, ports, paths, refs, and DNS answers are validated; redirects are disabled.
@@ -131,10 +131,13 @@ Stop PostgreSQL with `bun run db:down`.
 - Ordered `job_events` drive SSE. `Last-Event-ID`/`after` replay is implemented, with `follow=false` for a finite replay stream and safe `stream.error` events on database failure.
 - The scheduler owns a PostgreSQL pool, reports database-aware readiness, promotes due scheduled runs to queued, and recovers expired job leases. Due-run claim logic is implemented and tested for the future execution dispatcher.
 - Pi planning is implemented as an analysis-worker library (`services/analysis-worker/src/agent/`) with a constrained read-only/proposal tool registry, strict v1 validation, deterministic fallback, and a narrow PostgreSQL plan writer. It consumes the Phase 5 snapshot and Phase 6 inventory, and the control plane now exposes authenticated plan review/approval APIs. It is still not wired to an authenticated worker claim/dispatch path; the worker HTTP surface remains health-only.
-- Plans can be reviewed, selected, and approved with an immutable snapshot. Targets can be registered, validated against server-owned URL/DNS/IP policy, and authorized for a bounded time window. Run creation, dispatch, and reporting remain absent (Phases 11-13).
+- Plans can be reviewed, selected, and approved with an immutable snapshot. Targets can be registered, validated against server-owned URL/DNS/IP policy, and authorized for a bounded time window. Run creation, dispatch, and reporting remain absent (Phases 12-13).
 - Target management is API-only for now; there is no target registration or authorization UI. The guarded HTTP client and run budget are used by the Phase 10 native adapters, but no real scan or load test is executed.
 - The catalog contains inert entries (catalog 0.2.0). Only `http.headers.missing` and `http.cors.misconfiguration` have vetted native adapters (`http_probe` 0.1.0); every other entry is reported unavailable. Approval records the selected test set and does not start a run.
 - The Phase 10 adapter library (`crates/execution-adapters`) returns normalized, sanitized in-memory results. It is not dispatched by the worker, not persisted, and has no UI. No shell or external executable is used.
+- Phase 11 load scenarios are ordered, correlated, data-only steps with secret-backed headers, extraction/assertion rules, explicit statuses, and platform-capped profiles. They can be generated and approved without sending traffic. There is no k6 runner, schedule execution, metrics collection, or load UI beyond plan review; Phase 12 owns those.
+- Load scenarios are versioned by their parent plan version. Approval revalidates selected scenarios and pins the exact JSON/profile in the immutable snapshot; there is no independent scenario-edit endpoint.
+- Target-scope validation for load paths is implemented as a pure library function (`validate_load_scenario_scope`). Run creation must call it in Phase 12 before any traffic.
 - The web app now shows analysis jobs and a focused plan review, but there is still no job creation UI. Jobs are created through the API and plans must come from the worker/seed data until the authenticated job path is completed.
 - Versioned v1 contracts now include `job.claimed` and `job.retry_scheduled` events; catalog entries are populated and validated in TypeScript and Rust.
 - All services bind to loopback by default.

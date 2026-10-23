@@ -1,0 +1,22 @@
+{
+  "name": "Unbounded loop attempt",
+  "description": "Attempts to add an executable loop field to a load request.",
+  "requests": [
+    {
+      "id": "first",
+      "method": "GET",
+      "path": "/api/first",
+      "expectedStatuses": [200],
+      "loop": {
+        "while": true
+      }
+    }
+  ],
+  "profile": {
+    "virtualUsers": 2,
+    "rampUpSeconds": 5,
+    "durationSeconds": 30,
+    "maxRequests": 200,
+    "maxRequestsPerSecond": 2
+  }
+}

@@ -36,7 +36,7 @@ the shared fixture manifest is the drift guard between the two validators.
 | `jobCreation` | Goal (`vulnerability_testing` / `load_testing`), intensity, display name, HTTPS/SSH Git source, optional secret reference |
 | `plan` | Pi output: summary, confidence, planned tests, load scenarios, required inputs, limitations |
 | `plannedTest` | Catalog test ID, rationale, risk, expected evidence, safe configuration |
-| `loadScenario` / `loadProfile` | Structured HTTP requests and bounded VU/arrival-rate profile |
+| `loadScenario` / `loadProfile` | Ordered HTTP steps with typed correlation/assertions, secret-backed headers, and a bounded VU/arrival-rate profile |
 | `targetAuthorization` | Explicit confirmation, normalized origin/scope, hard limits, validity window |
 | `runRequest` | Approved plan version, selected tests/scenarios, target authorization, idempotency key |
 | `testResult` | Outcome, severity, confidence, bounded evidence metadata |
@@ -55,9 +55,12 @@ unknown goal fails schema validation and the database check constraint.
    enums, and out-of-range numbers.
 3. **Semantic checks:** forbidden credential-bearing load headers, HTTP-token
    header names and control-free values, origin/host and origin/port consistency,
-   goal/content consistency, duplicate IDs, nil UUIDs, timestamp ordering, and
-   executable-content rejection. Structured configuration, stop conditions, and
-   result details must be JSON objects (`safeJsonObject`), not arrays or scalars.
+   goal/content consistency, duplicate IDs, nil UUIDs, timestamp ordering,
+   template/dependency ordering, extraction/assertion selector shapes, body-size
+   limits, and executable-content rejection. Structured configuration, result
+   details, and arbitrary safe JSON must be JSON objects (`safeJsonObject`), not
+   arrays or scalars. Load stop conditions are a closed typed object rather than
+   arbitrary JSON.
 4. **Database constraints:** second-line defense for enums, ranges, project
    references, run shape, idempotency keys, and immutable records.
 
@@ -73,9 +76,22 @@ Model output is data, not code:
 - Free-form JSON fields use recursive `safeJson`, which rejects those property
   names at any depth (case-insensitive in both validators) and caps depth,
   arrays, object size, and strings.
-- Load requests are structured method/path/header/body data. Credential-bearing
-  headers (`Authorization`, `Cookie`, and related) are rejected; credentials use
-  `secret://` references.
+- Load requests are structured method/path/header/body steps. Literal
+  credential-bearing headers (`Authorization`, `Cookie`, and related) are
+  rejected; static credentials use `secretHeaders` values that must be
+  `secret://` references. Hop-by-hop and length-managed headers are rejected.
+  Steps may use earlier extraction variables as `${name}` in path, literal header
+  values, or body strings. `dependsOn` may only name earlier step IDs. Header or
+  JSON-pointer extractions create correlation variables, and bounded
+  header/JSON assertions replace scripts.
+- Load steps require at least one expected status and cannot attach a body to
+  GET, HEAD, or OPTIONS. Per-step body templates are capped at 64 KiB. Profiles
+  are capped at 100 VUs or 100 arrivals/s, 300 s ramp, 900 s duration, 100,000
+  requests, and 100 requests/s. Stop conditions are limited to `errorRate`,
+  `p95LatencyMs`, and `maxFailedRequests`.
+- A scenario is versioned by its parent plan version. Approval revalidates each
+  selected scenario and pins the exact scenario JSON and profile in the immutable
+  approval snapshot; there is no independent scenario-edit endpoint.
 - Planned tests reference a vetted catalog ID. Configuration is data validated
   again by the backend; it can never define a command or executable path.
 
@@ -170,6 +186,24 @@ the catalog is not tenant data. Viewers may read but not edit or approve. A stal
 revision returns `409 plan_conflict`; a non-current plan returns
 `409 plan_superseded`. Approval writes audit events but does not create a run or
 contact a target.
+
+## Load scenario generation and validation
+
+Load plans contain ordered, data-only steps. The contract is closed and rejects
+unknown fields, loops, scripts, raw credentials, forward dependencies, unknown
+template variables, oversized bodies, and profiles above platform maxima. The
+full field and limit reference is in [LOAD_SCENARIOS.md](LOAD_SCENARIOS.md).
+
+Pi proposes scenarios through the existing `plan_validate`/`plan_propose` tools;
+the server applies the same contract validation before persistence. The
+deterministic load fallback selects one conservative read-only route. Approval
+revalidates every selected scenario and pins the exact JSON and profile inside
+the immutable plan approval snapshot. Scenario versioning is the parent plan
+version; there is no independent scenario-edit endpoint.
+
+`validate_load_scenario_scope` in `crates/target-policy` checks every step against
+a chosen target authorization without DNS resolution or traffic. Phase 12 must
+call it at run creation and percent-encode extracted values before substitution.
 
 ## Health contract
 

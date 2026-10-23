@@ -40,6 +40,20 @@ output, repository text, or a shared tool-requirement string. Users may still
 select catalog-supported tests and record an approval; approval does not start a
 run, and run creation/dispatch remains deferred.
 
+### Load scenario review and versioning
+
+Load plans are reviewed in the same plan-review surface. Each scenario card shows
+its ordered steps, dependencies, secret-backed header names (never values),
+extraction variables, assertions, body-template presence, bounded profile, and
+closed stop conditions. Selection remains the only editable field.
+
+A scenario is versioned by the parent `test_plans.version`. Approval revalidates
+each selected scenario against the current contract, requires the stored row name
+to match, and writes the exact scenario JSON and profile into the immutable
+approval snapshot. Editing a scenario therefore requires a new plan version and a
+new approval; there is no independent scenario-edit endpoint. Approval never
+sends load traffic. See [LOAD_SCENARIOS.md](LOAD_SCENARIOS.md).
+
 ## API surface
 
 All routes are authenticated and return `no-store` responses.

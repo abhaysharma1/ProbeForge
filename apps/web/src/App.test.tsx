@@ -9,6 +9,8 @@ const USER = {
   displayName: "Owner",
 };
 
+const TOKEN_PLACEHOLDER = "$" + "{token}";
+
 const PROJECT = {
   id: "22222222-2222-4222-8222-222222222222",
   name: "Payments API",
@@ -123,6 +125,68 @@ const PLAN: JobPlan = {
   ],
   loadScenarios: [],
   approval: null,
+};
+
+const LOAD_JOB: Job = {
+  ...JOB,
+  id: "99999999-9999-4999-8999-999999999999",
+  goal: "load_testing",
+  displayName: "Load plan review",
+  currentPlanId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+};
+
+const LOAD_PLAN: JobPlan = {
+  ...PLAN,
+  id: LOAD_JOB.currentPlanId as string,
+  jobId: LOAD_JOB.id,
+  goal: "load_testing",
+  summary: "A conservative correlated load scenario for discovered routes.",
+  plannedTests: [],
+  loadScenarios: [
+    {
+      id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      name: "Baseline API read",
+      description: "Conservative correlated profile for discovered read-only routes.",
+      requests: [
+        {
+          id: "session",
+          method: "POST",
+          path: "/api/session",
+          headers: { "Content-Type": "application/json" },
+          secretHeaders: { Authorization: "secret://fixtures/service-token" },
+          extract: [{ name: "token", source: "header", selector: "x-session-token" }],
+          bodyTemplate: { username: "fixture-user" },
+          expectedStatuses: [200],
+        },
+        {
+          id: "profile",
+          method: "GET",
+          path: `/api/profile/${TOKEN_PLACEHOLDER}`,
+          dependsOn: ["session"],
+          headers: { "X-Session": TOKEN_PLACEHOLDER },
+          assertions: [
+            {
+              source: "json_body",
+              selector: "/status",
+              operator: "equals",
+              expected: "ok",
+            },
+          ],
+          expectedStatuses: [200],
+        },
+      ],
+      profile: {
+        virtualUsers: 2,
+        rampUpSeconds: 5,
+        durationSeconds: 30,
+        maxRequests: 200,
+        maxRequestsPerSecond: 2,
+        stopConditions: { errorRate: 0.05 },
+      },
+      credentialRef: null,
+      selected: false,
+    },
+  ],
 };
 
 function planWithSelection(selectedTestIds: readonly string[]): JobPlan {
@@ -430,6 +494,30 @@ describe("App", () => {
     expect(await screen.findByText(/Approval recorded/)).toBeInTheDocument();
     expect(await screen.findByText("Immutable approval recorded")).toBeInTheDocument();
     expect(await screen.findByText(/Approved by Owner/)).toBeInTheDocument();
+  });
+
+  it("reviews correlated load steps and the pinned scenario version", async () => {
+    await renderSignedIn({
+      session: true,
+      projects: [PROJECT],
+      jobs: [LOAD_JOB],
+      plan: LOAD_PLAN,
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Load plan review/ }));
+
+    expect(await screen.findByRole("heading", { name: "Load plan review" })).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Approval pins this scenario to plan v1. No load traffic is sent by approval.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Secret-backed headers: Authorization")).toBeInTheDocument();
+    expect(screen.getByText("Extracts: token from header:x-session-token")).toBeInTheDocument();
+    expect(screen.getByText("Asserts: json_body:/status equals")).toBeInTheDocument();
+    expect(screen.getByText("after session")).toBeInTheDocument();
+    expect(screen.getByText("error rate 0.05")).toBeInTheDocument();
   });
 
   it("shows a reload action when a concurrent edit conflicts", async () => {

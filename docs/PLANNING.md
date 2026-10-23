@@ -73,7 +73,11 @@ The contract schema is authoritative for structure. Additional policy rejects:
 - a risk below the catalog risk, or a high-risk test without explicit
   confirmation;
 - load catalog entries used as vulnerability tests;
-- load request paths that are protocol-relative (`//...`) or contain backslashes;
+- load request paths that are protocol-relative (`//...`), contain backslashes,
+  or use malformed `${...}` templates;
+- load dependencies that are missing, forward, duplicate, or self-referential;
+- unknown extraction variables, raw secret headers, loops/repeat fields,
+  GET/HEAD/OPTIONS bodies, oversized bodies, and missing expected statuses;
 - evidence or rationale references outside the snapshot;
 - credential-like material such as private-key blocks, bearer tokens, cloud
   keys, or `password=` / `client_secret=` values;
@@ -85,6 +89,12 @@ authorization, incomplete-route or unsupported-coverage warnings, a missing
 catalog prompt, and load-path review. It also adds a Phase 7 limitation stating
 that no target was contacted and no test was executed. Required inputs and
 limitations stay inside the schema's 20-item limit.
+
+Load proposals are additionally constrained by the Phase 11 contract: ordered
+steps from discovered routes, secret-backed headers, earlier-step extraction
+variables, bounded assertions, explicit statuses, and platform-capped profiles.
+The model receives these rules in its prompt and can call `plan_validate` before
+proposing. See [LOAD_SCENARIOS.md](LOAD_SCENARIOS.md).
 
 ## Budgets
 
@@ -119,8 +129,9 @@ Fallback is deterministic and uses only server-owned data:
   risk then stable ID. It is marked low confidence (`0.2`) and high-risk entries
   still require explicit confirmation.
 - **Load fallback:** one conservative profile (2/5/10 virtual users for
-  low/standard/high) against the first sorted literal `GET` or `HEAD` route. It
-  never contacts the target.
+  low/standard/high) against the first sorted literal `GET` or `HEAD` route. The
+  step has a stable ID and explicit expected statuses. It never contacts the
+  target.
 
 Fallback reasons are stable codes: `model_not_configured`, `model_not_found`,
 `model_unavailable`, `model_timeout`, `model_invalid_output`,

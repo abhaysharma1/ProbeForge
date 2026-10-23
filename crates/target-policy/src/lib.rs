@@ -17,7 +17,8 @@ use std::{
 };
 
 use probeforge_contracts::{
-    Environment, TargetLimits, TargetScope, validate_target_limits, validate_target_scope,
+    Environment, HttpMethod, LoadScenario, TargetLimits, TargetScope, validate_target_limits,
+    validate_target_scope,
 };
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, LOCATION};
 use thiserror::Error;
@@ -209,6 +210,13 @@ impl TargetValidationError {
             Self::InvalidRedirect => "The redirect response was not usable.",
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoadScenarioScopeIssue {
+    pub request_index: usize,
+    pub code: &'static str,
+    pub message: &'static str,
 }
 
 #[derive(Debug, Clone)]
@@ -619,6 +627,113 @@ pub fn validate_request_url(
         return Err(TargetValidationError::ScopeViolation);
     }
     Ok(())
+}
+
+/// Validates every load step against an already-approved target scope without
+/// resolving DNS or sending traffic. Path template variables are expanded to a
+/// harmless literal for the scope check; the Phase 12 runner must percent-encode
+/// runtime values before substitution.
+pub fn validate_load_scenario_scope(
+    scenario: &LoadScenario,
+    environment: Environment,
+    scope: &TargetScope,
+    policy: &TargetPolicy,
+) -> Result<(), Vec<LoadScenarioScopeIssue>> {
+    if validate_target_scope(scope).is_err() {
+        return Err(vec![LoadScenarioScopeIssue {
+            request_index: 0,
+            code: "invalid_target_scope",
+            message: "The target scope is invalid.",
+        }]);
+    }
+    let Ok(origin) = Url::parse(&scope.origin) else {
+        return Err(vec![LoadScenarioScopeIssue {
+            request_index: 0,
+            code: "invalid_target_origin",
+            message: "The target origin is invalid.",
+        }]);
+    };
+    let guard = TargetGuard {
+        environment,
+        scope: scope.clone(),
+    };
+    let mut issues = Vec::new();
+
+    for (index, request) in scenario.requests.iter().enumerate() {
+        let path = match expand_load_path(&request.path) {
+            Ok(path) => path,
+            Err(()) => {
+                issues.push(LoadScenarioScopeIssue {
+                    request_index: index,
+                    code: "invalid_load_path",
+                    message: "The load step path contains an invalid template.",
+                });
+                continue;
+            }
+        };
+        let Ok(url) = origin.join(&path) else {
+            issues.push(LoadScenarioScopeIssue {
+                request_index: index,
+                code: "invalid_load_path",
+                message: "The load step path is not a valid URL path.",
+            });
+            continue;
+        };
+        if let Err(error) = validate_request_url(&guard, &url, policy) {
+            issues.push(LoadScenarioScopeIssue {
+                request_index: index,
+                code: error.code(),
+                message: error.safe_message(),
+            });
+        }
+        if request.body_template.is_some()
+            && matches!(
+                request.method,
+                HttpMethod::Get | HttpMethod::Head | HttpMethod::Options
+            )
+        {
+            issues.push(LoadScenarioScopeIssue {
+                request_index: index,
+                code: "invalid_load_body",
+                message: "GET, HEAD, and OPTIONS load steps must not include a body.",
+            });
+        }
+    }
+
+    if issues.is_empty() {
+        Ok(())
+    } else {
+        Err(issues)
+    }
+}
+
+fn expand_load_path(path: &str) -> Result<String, ()> {
+    let mut expanded = String::with_capacity(path.len());
+    let mut remainder = path;
+    while let Some(start) = remainder.find("${") {
+        expanded.push_str(&remainder[..start]);
+        let after_start = &remainder[start + 2..];
+        let Some(end) = after_start.find('}') else {
+            return Err(());
+        };
+        let name = &after_start[..end];
+        let mut chars = name.chars();
+        let Some(first) = chars.next() else {
+            return Err(());
+        };
+        if name.len() > 64
+            || !first.is_ascii_lowercase()
+            || !chars.all(|character| {
+                character.is_ascii_lowercase() || character.is_ascii_digit() || character == '_'
+            })
+        {
+            return Err(());
+        }
+        expanded.push_str("probe");
+        remainder = &after_start[end + 1..];
+    }
+    expanded.push_str(remainder);
+    Ok(expanded)
 }
 
 pub fn validate_redirect(
@@ -1136,7 +1251,8 @@ impl GuardedHttpClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicUsize;
+    use probeforge_contracts::{LoadProfile, LoadRequest};
+    use std::{collections::BTreeMap, sync::atomic::AtomicUsize};
 
     struct StaticResolver(Vec<IpAddr>);
 
@@ -1165,6 +1281,101 @@ mod tests {
             allowed_paths: paths.iter().map(|path| (*path).to_owned()).collect(),
             allowed_ports: ports.to_vec(),
         }
+    }
+
+    fn load_request(method: HttpMethod, path: &str) -> LoadRequest {
+        LoadRequest {
+            id: Some("step".to_owned()),
+            method,
+            path: path.to_owned(),
+            headers: BTreeMap::new(),
+            secret_headers: BTreeMap::new(),
+            depends_on: Vec::new(),
+            extract: Vec::new(),
+            assertions: Vec::new(),
+            body_template: None,
+            expected_statuses: vec![200],
+        }
+    }
+
+    fn load_scenario(requests: Vec<LoadRequest>) -> LoadScenario {
+        LoadScenario {
+            name: "Scope fixture".to_owned(),
+            description: "Bounded fixture; no traffic is sent.".to_owned(),
+            requests,
+            profile: LoadProfile {
+                virtual_users: Some(2),
+                arrival_rate_per_second: None,
+                ramp_up_seconds: 5,
+                duration_seconds: 30,
+                max_requests: 200,
+                max_requests_per_second: 2.0,
+                stop_conditions: Default::default(),
+            },
+            credential_ref: None,
+        }
+    }
+
+    #[test]
+    fn load_scenario_scope_checks_every_step_without_network_access() {
+        let target_scope = scope("https://api.example.test", &["/api"], &[443]);
+        let scenario = load_scenario(vec![
+            load_request(HttpMethod::Get, "/api/items"),
+            load_request(HttpMethod::Get, "/api/items/${item_id}"),
+        ]);
+        assert!(
+            validate_load_scenario_scope(
+                &scenario,
+                Environment::Staging,
+                &target_scope,
+                &TargetPolicy::default(),
+            )
+            .is_ok()
+        );
+
+        let outside = load_scenario(vec![load_request(HttpMethod::Get, "/admin")]);
+        let issues = validate_load_scenario_scope(
+            &outside,
+            Environment::Staging,
+            &target_scope,
+            &TargetPolicy::default(),
+        )
+        .expect_err("out-of-scope path must fail");
+        assert_eq!(issues[0].code, "target_scope_violation");
+
+        let expression = load_scenario(vec![load_request(
+            HttpMethod::Get,
+            "/api/${process.env.SECRET}",
+        )]);
+        let issues = validate_load_scenario_scope(
+            &expression,
+            Environment::Staging,
+            &target_scope,
+            &TargetPolicy::default(),
+        )
+        .expect_err("invalid template must fail");
+        assert_eq!(issues[0].code, "invalid_load_path");
+
+        let mut body_request = load_request(HttpMethod::Get, "/api/items");
+        body_request.body_template = Some(serde_json::json!({"query": "fixture"}));
+        let issues = validate_load_scenario_scope(
+            &load_scenario(vec![body_request]),
+            Environment::Staging,
+            &target_scope,
+            &TargetPolicy::default(),
+        )
+        .expect_err("GET body must fail");
+        assert_eq!(issues[0].code, "invalid_load_body");
+
+        let insecure = scope("http://api.example.test", &["/api"], &[80]);
+        let issues = validate_load_scenario_scope(
+            &load_scenario(vec![load_request(HttpMethod::Get, "/api/items")]),
+            Environment::Production,
+            &insecure,
+            &TargetPolicy::default(),
+        )
+        .expect_err("production HTTP must fail");
+        assert_eq!(issues[0].code, "insecure_production_target");
     }
 
     #[test]

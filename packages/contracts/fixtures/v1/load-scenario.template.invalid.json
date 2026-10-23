@@ -1,0 +1,19 @@
+{
+  "name": "Script expression in template",
+  "description": "Uses an unsupported template expression instead of a bounded extracted variable.",
+  "requests": [
+    {
+      "id": "first",
+      "method": "GET",
+      "path": "/api/${process.env.SECRET}",
+      "expectedStatuses": [200]
+    }
+  ],
+  "profile": {
+    "virtualUsers": 2,
+    "rampUpSeconds": 5,
+    "durationSeconds": 30,
+    "maxRequests": 200,
+    "maxRequestsPerSecond": 2
+  }
+}

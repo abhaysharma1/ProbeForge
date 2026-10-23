@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
+use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -167,6 +168,17 @@ pub struct JobCreation {
     pub git: GitSource,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct LoadStopConditions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_rate: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub p95_latency_ms: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_failed_requests: Option<u64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct LoadProfile {
@@ -178,20 +190,71 @@ pub struct LoadProfile {
     pub duration_seconds: u32,
     pub max_requests: u64,
     pub max_requests_per_second: f64,
-    #[serde(default = "empty_object")]
-    pub stop_conditions: Value,
+    #[serde(default, deserialize_with = "deserialize_load_stop_conditions")]
+    pub stop_conditions: LoadStopConditions,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LoadExtractionSource {
+    Header,
+    JsonBody,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct LoadExtraction {
+    pub name: String,
+    pub source: LoadExtractionSource,
+    pub selector: String,
+    #[serde(default = "default_true")]
+    pub required: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LoadAssertionSource {
+    Header,
+    JsonBody,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LoadAssertionOperator {
+    Equals,
+    Contains,
+    Exists,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct LoadAssertion {
+    pub source: LoadAssertionSource,
+    pub selector: String,
+    pub operator: LoadAssertionOperator,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct LoadRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub method: HttpMethod,
     pub path: String,
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
+    #[serde(default)]
+    pub secret_headers: BTreeMap<String, String>,
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+    #[serde(default)]
+    pub extract: Vec<LoadExtraction>,
+    #[serde(default)]
+    pub assertions: Vec<LoadAssertion>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body_template: Option<Value>,
-    #[serde(default)]
     pub expected_statuses: Vec<u16>,
 }
 
@@ -330,4 +393,19 @@ pub struct JobEvent {
 
 fn empty_object() -> Value {
     Value::Object(serde_json::Map::new())
+}
+
+fn deserialize_load_stop_conditions<'de, D>(deserializer: D) -> Result<LoadStopConditions, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    if !value.is_object() {
+        return Err(de::Error::custom("stopConditions must be a JSON object"));
+    }
+    serde_json::from_value(value).map_err(de::Error::custom)
+}
+
+fn default_true() -> bool {
+    true
 }

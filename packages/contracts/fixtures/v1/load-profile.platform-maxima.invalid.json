@@ -1,0 +1,7 @@
+{
+  "virtualUsers": 101,
+  "rampUpSeconds": 30,
+  "durationSeconds": 901,
+  "maxRequests": 100001,
+  "maxRequestsPerSecond": 101
+}

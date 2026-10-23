@@ -1350,6 +1350,7 @@ dependencies = [
  "chrono",
  "probeforge-contracts",
  "reqwest",
+ "serde_json",
  "thiserror",
  "tokio",
  "url",

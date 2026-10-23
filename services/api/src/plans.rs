@@ -13,7 +13,9 @@ use axum::{
     routing::{get, post},
 };
 use chrono::{DateTime, Utc};
-use probeforge_contracts::{JobGoal, LoadProfile, LoadRequest, Plan, Risk, validate_plan};
+use probeforge_contracts::{
+    JobGoal, LoadProfile, LoadRequest, Plan, Risk, validate_load_scenario, validate_plan,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
@@ -390,6 +392,21 @@ async fn approve_plan(
         ));
     }
     validate_selection_for_goal(plan.goal, tests.len(), scenarios.len())?;
+
+    for scenario in &scenarios {
+        let validated = validate_load_scenario(&scenario.scenario).map_err(|_| {
+            ApiError::conflict(
+                "invalid_load_scenario",
+                "A selected load scenario no longer passes contract validation.",
+            )
+        })?;
+        if validated.name != scenario.name {
+            return Err(ApiError::conflict(
+                "invalid_load_scenario",
+                "A selected load scenario does not match its stored name.",
+            ));
+        }
+    }
 
     let catalog_version = catalog::catalog_version()
         .map_err(catalog_internal_error)?

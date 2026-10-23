@@ -12,6 +12,8 @@ import type {
   JobCreation,
   JobEvent,
   JsonValue,
+  LoadAssertion,
+  LoadExtraction,
   LoadProfile,
   LoadScenario,
   Plan,
@@ -42,7 +44,18 @@ const CREDENTIAL_HEADERS = new Set([
   "proxy-authorization",
   "set-cookie",
 ]);
+const FORBIDDEN_LOAD_HEADERS = new Set([
+  "host",
+  "content-length",
+  "transfer-encoding",
+  "connection",
+  "keep-alive",
+]);
 const HEADER_NAME_RE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+const LOAD_STEP_ID_RE = /^[a-z][a-z0-9_-]{0,63}$/;
+const LOAD_VARIABLE_RE = /^[a-z][a-z0-9_]{0,63}$/;
+const LOAD_MAX_BODY_BYTES = 64 * 1024;
+const TEMPLATE_FORM = "$" + "{name}";
 
 export interface ValidationIssue {
   readonly path: string;
@@ -346,55 +359,339 @@ function checkLoadScenario(scenario: LoadScenario, path: string, issues: Validat
   checkText(scenario.name, `${path}/name`, 160, issues);
   checkText(scenario.description, `${path}/description`, 2000, issues);
 
+  if (scenario.requests.length === 0) {
+    issues.push(issue(`${path}/requests`, "a load scenario requires at least one request"));
+  }
+  if (scenario.requests.length > 50) {
+    issues.push(issue(`${path}/requests`, "at most 50 requests are allowed"));
+  }
+
+  const priorStepIds = new Set<string>();
+  const seenStepIds = new Set<string>();
+  const extractedNames = new Set<string>();
+
   scenario.requests.forEach((request, index) => {
     const requestPath = `${path}/requests/${index}`;
-    checkRequestPath(request.path, `${requestPath}/path`, issues);
-    for (const [name, value] of Object.entries(request.headers ?? {})) {
-      if (name.length > 120 || !HEADER_NAME_RE.test(name)) {
+
+    if (request.id !== undefined) {
+      if (!LOAD_STEP_ID_RE.test(request.id)) {
         issues.push(
           issue(
-            `${requestPath}/headers/${name}`,
-            "header names must be valid HTTP token characters",
+            `${requestPath}/id`,
+            "step ids must start with a lowercase letter and contain only lowercase letters, digits, underscores, or hyphens",
           ),
         );
+      }
+      if (seenStepIds.has(request.id)) {
+        issues.push(issue(`${requestPath}/id`, "step ids must be unique within a load scenario"));
+      }
+      seenStepIds.add(request.id);
+    }
+
+    const dependencies = request.dependsOn ?? [];
+    if (dependencies.length > 20) {
+      issues.push(issue(`${requestPath}/dependsOn`, "at most 20 dependencies are allowed"));
+    }
+    const seenDependencies = new Set<string>();
+    dependencies.forEach((dependency) => {
+      if (seenDependencies.has(dependency)) {
+        issues.push(issue(`${requestPath}/dependsOn`, "dependencies must be unique"));
+        return;
+      }
+      seenDependencies.add(dependency);
+      if (!priorStepIds.has(dependency)) {
+        issues.push(
+          issue(`${requestPath}/dependsOn`, "dependencies must refer to an earlier step id"),
+        );
+      }
+    });
+
+    checkRequestPath(request.path, `${requestPath}/path`, issues);
+    checkTemplateValue(request.path, extractedNames, `${requestPath}/path`, issues);
+
+    for (const [name, value] of Object.entries(request.headers ?? {})) {
+      const headerPath = `${requestPath}/headers/${name}`;
+      if (name.length > 120 || !HEADER_NAME_RE.test(name)) {
+        issues.push(issue(headerPath, "header names must be valid HTTP token characters"));
       }
       if (CREDENTIAL_HEADERS.has(name.toLowerCase())) {
-        issues.push(
-          issue(
-            `${requestPath}/headers/${name}`,
-            "credential-bearing headers must use credentialRef instead",
-          ),
-        );
+        issues.push(issue(headerPath, "credential-bearing headers must use credentialRef instead"));
+      }
+      if (FORBIDDEN_LOAD_HEADERS.has(name.toLowerCase())) {
+        issues.push(issue(headerPath, "hop-by-hop and length-managed headers are not allowed"));
       }
       if (value.length > 1024) {
-        issues.push(
-          issue(`${requestPath}/headers/${name}`, "header values are limited to 1024 characters"),
-        );
+        issues.push(issue(headerPath, "header values are limited to 1024 characters"));
       }
       if (hasControlCharacters(value)) {
+        issues.push(issue(headerPath, "header values must not contain control characters"));
+      }
+      checkTemplateValue(value, extractedNames, headerPath, issues);
+    }
+
+    checkSecretHeaders(
+      request.headers ?? {},
+      request.secretHeaders ?? {},
+      `${requestPath}/secretHeaders`,
+      issues,
+    );
+
+    const extractions = request.extract ?? [];
+    if (extractions.length > 20) {
+      issues.push(issue(`${requestPath}/extract`, "at most 20 extraction rules are allowed"));
+    }
+    extractions.forEach((extraction, extractionIndex) => {
+      const extractionPath = `${requestPath}/extract/${extractionIndex}`;
+      checkLoadExtraction(extraction, extractionPath, issues);
+    });
+
+    const assertions = request.assertions ?? [];
+    if (assertions.length > 20) {
+      issues.push(issue(`${requestPath}/assertions`, "at most 20 assertions are allowed"));
+    }
+    assertions.forEach((assertion, assertionIndex) => {
+      checkLoadAssertion(assertion, `${requestPath}/assertions/${assertionIndex}`, issues);
+    });
+
+    if (request.bodyTemplate !== undefined) {
+      const bodyPath = `${requestPath}/bodyTemplate`;
+      checkSafeJson(request.bodyTemplate, bodyPath, 0, issues);
+      checkTemplateJson(request.bodyTemplate, extractedNames, bodyPath, issues);
+      if (
+        new TextEncoder().encode(JSON.stringify(request.bodyTemplate) ?? "").byteLength >
+        LOAD_MAX_BODY_BYTES
+      ) {
         issues.push(
-          issue(
-            `${requestPath}/headers/${name}`,
-            "header values must not contain control characters",
-          ),
+          issue(bodyPath, `load request bodies must not exceed ${LOAD_MAX_BODY_BYTES} bytes`),
+        );
+      }
+      if (request.method === "GET" || request.method === "HEAD" || request.method === "OPTIONS") {
+        issues.push(
+          issue(bodyPath, "GET, HEAD, and OPTIONS load requests must not include a body template"),
         );
       }
     }
-    if (request.bodyTemplate !== undefined) {
-      checkSafeJson(request.bodyTemplate, `${requestPath}/bodyTemplate`, 0, issues);
+
+    if (request.expectedStatuses.length === 0) {
+      issues.push(
+        issue(
+          `${requestPath}/expectedStatuses`,
+          "each load request requires at least one expected status",
+        ),
+      );
     }
-    for (const status of request.expectedStatuses ?? []) {
+    if (request.expectedStatuses.length > 20) {
+      issues.push(
+        issue(`${requestPath}/expectedStatuses`, "at most 20 expected statuses are allowed"),
+      );
+    }
+    for (const status of request.expectedStatuses) {
       if (!Number.isInteger(status) || status < 100 || status > 599) {
         issues.push(
           issue(`${requestPath}/expectedStatuses`, "statuses must be between 100 and 599"),
         );
       }
     }
+
+    extractions.forEach((extraction, extractionIndex) => {
+      if (extractedNames.has(extraction.name)) {
+        issues.push(
+          issue(
+            `${requestPath}/extract/${extractionIndex}/name`,
+            "extraction variable names must be unique within a load scenario",
+          ),
+        );
+      }
+      extractedNames.add(extraction.name);
+    });
+
+    if (request.id !== undefined) {
+      priorStepIds.add(request.id);
+    }
   });
 
   checkLoadProfile(scenario.profile, `${path}/profile`, issues);
   if (scenario.credentialRef !== undefined) {
     checkCredentialRef(scenario.credentialRef, `${path}/credentialRef`, issues);
+  }
+}
+
+function checkLoadExtraction(
+  extraction: LoadExtraction,
+  path: string,
+  issues: ValidationIssue[],
+): void {
+  if (!LOAD_VARIABLE_RE.test(extraction.name)) {
+    issues.push(
+      issue(
+        `${path}/name`,
+        "extraction names must start with a lowercase letter and contain only lowercase letters, digits, or underscores",
+      ),
+    );
+  }
+  if (extraction.source === "header") {
+    if (!HEADER_NAME_RE.test(extraction.selector)) {
+      issues.push(
+        issue(`${path}/selector`, "header extraction selectors must be valid HTTP header names"),
+      );
+    }
+  } else {
+    checkJsonPointer(extraction.selector, `${path}/selector`, issues);
+  }
+}
+
+function checkLoadAssertion(
+  assertion: LoadAssertion,
+  path: string,
+  issues: ValidationIssue[],
+): void {
+  if (assertion.source === "header") {
+    if (!HEADER_NAME_RE.test(assertion.selector)) {
+      issues.push(
+        issue(`${path}/selector`, "header assertion selectors must be valid HTTP header names"),
+      );
+    }
+  } else {
+    checkJsonPointer(assertion.selector, `${path}/selector`, issues);
+  }
+
+  if (assertion.operator === "exists") {
+    if (assertion.expected !== undefined) {
+      issues.push(
+        issue(`${path}/expected`, "exists assertions must not include an expected value"),
+      );
+    }
+    return;
+  }
+
+  if (assertion.expected === undefined) {
+    issues.push(
+      issue(`${path}/expected`, "equals and contains assertions require an expected value"),
+    );
+    return;
+  }
+  if (assertion.operator === "contains" && typeof assertion.expected !== "string") {
+    issues.push(issue(`${path}/expected`, "contains assertions require a string expected value"));
+  }
+  if (assertion.source === "header" && typeof assertion.expected !== "string") {
+    issues.push(issue(`${path}/expected`, "header assertions require a string expected value"));
+  }
+  if (
+    typeof assertion.expected !== "string" &&
+    typeof assertion.expected !== "number" &&
+    typeof assertion.expected !== "boolean" &&
+    assertion.expected !== null
+  ) {
+    issues.push(
+      issue(
+        `${path}/expected`,
+        "assertion expected values must be strings, numbers, booleans, or null",
+      ),
+    );
+  }
+  if (
+    typeof assertion.expected === "string" &&
+    (assertion.expected.length > 1024 || hasControlCharacters(assertion.expected))
+  ) {
+    issues.push(
+      issue(`${path}/expected`, "assertion string values must be bounded and control-free"),
+    );
+  }
+}
+
+function checkSecretHeaders(
+  literalHeaders: Readonly<Record<string, string>>,
+  secretHeaders: Readonly<Record<string, string>>,
+  path: string,
+  issues: ValidationIssue[],
+): void {
+  const entries = Object.entries(secretHeaders);
+  if (entries.length > 20) {
+    issues.push(issue(path, "at most 20 secret header references are allowed"));
+  }
+  const seen = new Set<string>();
+  for (const [name, reference] of entries) {
+    if (!HEADER_NAME_RE.test(name) || name.length > 120) {
+      issues.push(issue(`${path}/${name}`, "header names must be valid HTTP token characters"));
+    }
+    const lower = name.toLowerCase();
+    if (seen.has(lower)) {
+      issues.push(issue(`${path}/${name}`, "secret header names must be unique ignoring case"));
+    }
+    seen.add(lower);
+    if (FORBIDDEN_LOAD_HEADERS.has(lower)) {
+      issues.push(
+        issue(`${path}/${name}`, "hop-by-hop and length-managed headers are not allowed"),
+      );
+    }
+    if (Object.keys(literalHeaders).some((literal) => literal.toLowerCase() === lower)) {
+      issues.push(
+        issue(`${path}/${name}`, "a header cannot be supplied as both literal and secret-backed"),
+      );
+    }
+    checkCredentialRef(reference, `${path}/${name}`, issues);
+  }
+}
+
+function checkTemplateValue(
+  value: string,
+  extractedNames: ReadonlySet<string>,
+  path: string,
+  issues: ValidationIssue[],
+): void {
+  let remainder = value;
+  while (true) {
+    const start = remainder.indexOf("${");
+    if (start === -1) return;
+    const afterStart = remainder.slice(start + 2);
+    const end = afterStart.indexOf("}");
+    if (end === -1) {
+      issues.push(issue(path, `template placeholders must use the form ${TEMPLATE_FORM}`));
+      return;
+    }
+    const name = afterStart.slice(0, end);
+    if (!LOAD_VARIABLE_RE.test(name)) {
+      issues.push(issue(path, "template placeholders must use a bounded lowercase variable name"));
+      return;
+    }
+    if (!extractedNames.has(name)) {
+      issues.push(issue(path, "template variables must be extracted by an earlier step"));
+    }
+    remainder = afterStart.slice(end + 1);
+  }
+}
+
+function checkTemplateJson(
+  value: JsonValue,
+  extractedNames: ReadonlySet<string>,
+  path: string,
+  issues: ValidationIssue[],
+): void {
+  if (typeof value === "string") {
+    checkTemplateValue(value, extractedNames, path, issues);
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => {
+      checkTemplateJson(item, extractedNames, `${path}/${index}`, issues);
+    });
+    return;
+  }
+  if (value !== null && typeof value === "object") {
+    for (const [key, item] of Object.entries(value)) {
+      checkTemplateJson(item, extractedNames, `${path}/${key}`, issues);
+    }
+  }
+}
+
+function checkJsonPointer(value: string, path: string, issues: ValidationIssue[]): void {
+  if (
+    !value.startsWith("/") ||
+    value.length > 500 ||
+    hasControlCharacters(value) ||
+    value.includes("${")
+  ) {
+    issues.push(issue(path, "JSON selectors must be bounded JSON pointers beginning with /"));
   }
 }
 
@@ -410,40 +707,72 @@ function checkLoadProfile(profile: LoadProfile, path: string, issues: Validation
     profile.virtualUsers !== undefined &&
     (!Number.isInteger(profile.virtualUsers) ||
       profile.virtualUsers < 1 ||
-      profile.virtualUsers > 500)
+      profile.virtualUsers > 100)
   ) {
-    issues.push(issue(`${path}/virtualUsers`, "virtualUsers must be between 1 and 500"));
+    issues.push(issue(`${path}/virtualUsers`, "virtualUsers must be between 1 and 100"));
   }
   if (
     profile.arrivalRatePerSecond !== undefined &&
     (!Number.isFinite(profile.arrivalRatePerSecond) ||
       profile.arrivalRatePerSecond < 0.1 ||
-      profile.arrivalRatePerSecond > 1000)
+      profile.arrivalRatePerSecond > 100)
   ) {
     issues.push(
-      issue(`${path}/arrivalRatePerSecond`, "arrivalRatePerSecond must be between 0.1 and 1000"),
+      issue(`${path}/arrivalRatePerSecond`, "arrivalRatePerSecond must be between 0.1 and 100"),
     );
   }
-  if (profile.durationSeconds < 1 || profile.durationSeconds > 3600) {
-    issues.push(issue(`${path}/durationSeconds`, "durationSeconds must be between 1 and 3600"));
+  if (profile.durationSeconds < 1 || profile.durationSeconds > 900) {
+    issues.push(issue(`${path}/durationSeconds`, "durationSeconds must be between 1 and 900"));
   }
-  if (profile.rampUpSeconds < 0 || profile.rampUpSeconds > 3600) {
-    issues.push(issue(`${path}/rampUpSeconds`, "rampUpSeconds must not exceed 3600"));
+  if (profile.rampUpSeconds < 0 || profile.rampUpSeconds > 300) {
+    issues.push(issue(`${path}/rampUpSeconds`, "rampUpSeconds must not exceed 300"));
   }
-  if (profile.maxRequests < 1 || profile.maxRequests > 1_000_000) {
-    issues.push(issue(`${path}/maxRequests`, "maxRequests must be between 1 and 1000000"));
+  if (profile.maxRequests < 1 || profile.maxRequests > 100_000) {
+    issues.push(issue(`${path}/maxRequests`, "maxRequests must be between 1 and 100000"));
   }
   if (
     !Number.isFinite(profile.maxRequestsPerSecond) ||
     profile.maxRequestsPerSecond < 0.1 ||
-    profile.maxRequestsPerSecond > 1000
+    profile.maxRequestsPerSecond > 100
   ) {
     issues.push(
-      issue(`${path}/maxRequestsPerSecond`, "maxRequestsPerSecond must be between 0.1 and 1000"),
+      issue(`${path}/maxRequestsPerSecond`, "maxRequestsPerSecond must be between 0.1 and 100"),
     );
   }
-  if (profile.stopConditions !== undefined) {
-    checkSafeJson(profile.stopConditions, `${path}/stopConditions`, 0, issues);
+
+  const conditions = profile.stopConditions;
+  if (conditions !== undefined) {
+    if (
+      conditions.errorRate !== undefined &&
+      (!Number.isFinite(conditions.errorRate) ||
+        conditions.errorRate < 0 ||
+        conditions.errorRate > 1)
+    ) {
+      issues.push(issue(`${path}/stopConditions/errorRate`, "errorRate must be between 0 and 1"));
+    }
+    if (
+      conditions.p95LatencyMs !== undefined &&
+      (!Number.isInteger(conditions.p95LatencyMs) ||
+        conditions.p95LatencyMs < 1 ||
+        conditions.p95LatencyMs > 60_000)
+    ) {
+      issues.push(
+        issue(`${path}/stopConditions/p95LatencyMs`, "p95LatencyMs must be between 1 and 60000"),
+      );
+    }
+    if (
+      conditions.maxFailedRequests !== undefined &&
+      (!Number.isInteger(conditions.maxFailedRequests) ||
+        conditions.maxFailedRequests < 1 ||
+        conditions.maxFailedRequests > 100_000)
+    ) {
+      issues.push(
+        issue(
+          `${path}/stopConditions/maxFailedRequests`,
+          "maxFailedRequests must be between 1 and 100000",
+        ),
+      );
+    }
   }
 }
 
@@ -627,9 +956,11 @@ function checkRequestPath(value: string, path: string, issues: ValidationIssue[]
     !value.startsWith("/") ||
     value.length > 2000 ||
     value.includes("..") ||
+    value.includes("//") ||
+    value.includes("\\") ||
     hasControlCharacters(value)
   ) {
-    issues.push(issue(path, "must be an absolute path without traversal segments"));
+    issues.push(issue(path, "must be an absolute path without traversal or separator escapes"));
   }
 }
 

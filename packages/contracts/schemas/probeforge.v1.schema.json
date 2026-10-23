@@ -143,6 +143,86 @@
       "maxLength": 119,
       "pattern": "^[a-z0-9][a-z0-9.-]{1,118}$"
     },
+    "loadStopConditions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "errorRate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "p95LatencyMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 60000
+        },
+        "maxFailedRequests": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        }
+      }
+    },
+    "loadExtraction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "source", "selector"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        "source": {
+          "type": "string",
+          "enum": ["header", "json_body"]
+        },
+        "selector": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "required": {
+          "type": "boolean"
+        }
+      }
+    },
+    "loadAssertion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "selector", "operator"],
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": ["header", "json_body"]
+        },
+        "selector": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "operator": {
+          "type": "string",
+          "enum": ["equals", "contains", "exists"]
+        },
+        "expected": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
     "loadProfile": {
       "type": "object",
       "additionalProperties": false,
@@ -165,43 +245,47 @@
         "virtualUsers": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 500
+          "maximum": 100
         },
         "arrivalRatePerSecond": {
           "type": "number",
           "minimum": 0.1,
-          "maximum": 1000
+          "maximum": 100
         },
         "rampUpSeconds": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 3600
+          "maximum": 300
         },
         "durationSeconds": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 3600
+          "maximum": 900
         },
         "maxRequests": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 1000000
+          "maximum": 100000
         },
         "maxRequestsPerSecond": {
           "type": "number",
           "minimum": 0.1,
-          "maximum": 1000
+          "maximum": 100
         },
         "stopConditions": {
-          "$ref": "#/$defs/safeJsonObject"
+          "$ref": "#/$defs/loadStopConditions"
         }
       }
     },
     "loadRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["method", "path"],
+      "required": ["method", "path", "expectedStatuses"],
       "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
         "method": {
           "$ref": "#/$defs/httpMethod"
         },
@@ -217,6 +301,36 @@
           "additionalProperties": {
             "type": "string",
             "maxLength": 1024
+          }
+        },
+        "secretHeaders": {
+          "type": "object",
+          "maxProperties": 20,
+          "additionalProperties": {
+            "$ref": "#/$defs/secretReference"
+          }
+        },
+        "dependsOn": {
+          "type": "array",
+          "maxItems": 20,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+          }
+        },
+        "extract": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/loadExtraction"
+          }
+        },
+        "assertions": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/loadAssertion"
           }
         },
         "bodyTemplate": {

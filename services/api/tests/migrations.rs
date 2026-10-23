@@ -202,6 +202,27 @@ async fn migrations_create_and_enforce_core_schema() {
         "migration 0010 did not add target validation columns"
     );
 
+    let load_safety_constraints: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_constraint
+         WHERE conrelid = 'load_profiles'::regclass
+           AND conname IN (
+            'load_profiles_platform_virtual_users',
+            'load_profiles_platform_arrival_rate',
+            'load_profiles_platform_ramp',
+            'load_profiles_platform_duration',
+            'load_profiles_platform_requests',
+            'load_profiles_platform_rate',
+            'load_profiles_stop_condition_keys'
+         )",
+    )
+    .fetch_one(&schema_pool)
+    .await
+    .expect("load safety constraint lookup");
+    assert_eq!(
+        load_safety_constraints, 7,
+        "migration 0011 did not add load safety constraints"
+    );
+
     let approval_run_constraint: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_constraint
          WHERE connamespace = current_schema()::regnamespace

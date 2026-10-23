@@ -296,25 +296,36 @@ Legend: `[x]` done with evidence - `[ ]` not done.
 
 ## Phase 11 — Load scenario generation and validation
 
-**Status:** Not started
+**Status:** Complete - [report](phases/11_load_scenarios_report.md)
 
 **Tasks**
 
-- [ ] Define a declarative scenario schema: steps, HTTP methods, path templates, headers from secret references, payload templates, extraction/correlation rules, assertions, and dependencies
-- [ ] Pi proposes scenarios from discovered API routes and schemas
-- [ ] Validate that every endpoint belongs to the approved target scope
-- [ ] Support authentication through secret references; never put raw credentials in prompts or plans
-- [ ] Detect dangerous loops, unbounded iteration, oversized bodies, and unsupported script expressions
-- [ ] Implement user review and versioning for scenarios
-- [ ] Define safe profiles with hard platform maxima
-- [ ] Add deterministic fixture-based tests for scenario validation
+- [x] Define a declarative scenario schema: steps, HTTP methods, path templates, headers from secret references, payload templates, extraction/correlation rules, assertions, and dependencies - v1 load contract in Rust/TS/JSON Schema
+- [x] Pi proposes scenarios from discovered API routes and schemas - bounded prompt policy and existing discovery tools
+- [x] Validate that every endpoint belongs to the approved target scope - `validate_load_scenario_scope` (pure, no traffic); Phase 12 must call it at run creation
+- [x] Support authentication through secret references; never put raw credentials in prompts or plans - typed `secretHeaders`, `credentialRef`, and raw-credential rejection
+- [x] Detect dangerous loops, unbounded iteration, oversized bodies, and unsupported script expressions - closed schema, body cap, template parser, fixture/unit tests
+- [x] Implement user review and versioning for scenarios - plan-review detail, selection only, parent plan version, immutable approval snapshot
+- [x] Define safe profiles with hard platform maxima - contract maxima plus migration `0011` constraints
+- [x] Add deterministic fixture-based tests for scenario validation - shared Rust/TS fixtures and unit tests
 
 **Exit gate**
 
-- [ ] A scenario can be generated and validated without sending traffic
-- [ ] Invalid paths, unbounded loops, arbitrary code, and excessive profiles are rejected
-- [ ] User approval pins scenario version and load profile
-- [ ] No load test is run against a live deployment
+- [x] A scenario can be generated and validated without sending traffic
+- [x] Invalid paths, unbounded loops, arbitrary code, and excessive profiles are rejected
+- [x] User approval pins scenario version and load profile
+- [x] No load test is run against a live deployment
+
+**Evidence**
+
+- Contract types/validation: `crates/contracts/src/model.rs`, `crates/contracts/src/validation.rs`
+- Shared schema/fixtures: `packages/contracts/schemas/probeforge.v1.schema.json`, `packages/contracts/fixtures/v1/`, `packages/contracts/src/validate.ts`
+- Planning and generation: `services/analysis-worker/src/agent/planning-input.ts`, `fallback.ts`, `validate.ts`
+- Scope validation: `crates/target-policy/src/lib.rs`
+- Approval/snapshot validation: `services/api/src/plans.rs`, `services/api/tests/plans_approval.rs`
+- Database safety: `migrations/0011_load_safety.sql`, migration/constraint tests
+- UI: `apps/web/src/PlanReview.tsx` (step/correlation/profile review)
+- Report: `docs/phases/11_load_scenarios_report.md`; design: `docs/LOAD_SCENARIOS.md`; decision D-032
 
 ## Phase 12 — Load runner and scheduler
 

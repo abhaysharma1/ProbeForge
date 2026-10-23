@@ -83,6 +83,36 @@
       "valid": true
     },
     {
+      "name": "correlated load scenario with secret headers, extraction, and assertions",
+      "validator": "loadScenario",
+      "path": "load-scenario.advanced.valid.json",
+      "valid": true
+    },
+    {
+      "name": "load scenario unknown dependency and template variable",
+      "validator": "loadScenario",
+      "path": "load-scenario.dependency.invalid.json",
+      "valid": false
+    },
+    {
+      "name": "load scenario script expression template",
+      "validator": "loadScenario",
+      "path": "load-scenario.template.invalid.json",
+      "valid": false
+    },
+    {
+      "name": "load scenario loop field",
+      "validator": "loadScenario",
+      "path": "load-scenario.loop.invalid.json",
+      "valid": false
+    },
+    {
+      "name": "load scenario raw secret header",
+      "validator": "loadScenario",
+      "path": "load-scenario.secret-header.invalid.json",
+      "valid": false
+    },
+    {
       "name": "load scenario executable body",
       "validator": "loadScenario",
       "path": "load-scenario.script.invalid.json",
@@ -129,6 +159,18 @@
       "name": "load profile stop conditions are not an object",
       "validator": "loadProfile",
       "path": "load-profile.stop-conditions.invalid.json",
+      "valid": false
+    },
+    {
+      "name": "load profile unknown stop condition",
+      "validator": "loadProfile",
+      "path": "load-profile.stop-conditions-unknown.invalid.json",
+      "valid": false
+    },
+    {
+      "name": "load profile above platform maxima",
+      "validator": "loadProfile",
+      "path": "load-profile.platform-maxima.invalid.json",
       "valid": false
     },
 

@@ -1,0 +1,59 @@
+{
+  "name": "Correlated session flow",
+  "description": "A bounded two-step flow that uses a secret-backed header, extracts a session token, and correlates it into the next step.",
+  "requests": [
+    {
+      "id": "session",
+      "method": "POST",
+      "path": "/api/session",
+      "headers": {
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+      },
+      "secretHeaders": {
+        "Authorization": "secret://fixtures/service-token"
+      },
+      "extract": [
+        {
+          "name": "token",
+          "source": "header",
+          "selector": "x-session-token"
+        }
+      ],
+      "bodyTemplate": {
+        "username": "fixture-user"
+      },
+      "expectedStatuses": [200]
+    },
+    {
+      "id": "profile",
+      "method": "GET",
+      "path": "/api/profile/${token}",
+      "dependsOn": ["session"],
+      "headers": {
+        "X-Session": "${token}"
+      },
+      "assertions": [
+        {
+          "source": "json_body",
+          "selector": "/status",
+          "operator": "equals",
+          "expected": "ok"
+        }
+      ],
+      "expectedStatuses": [200]
+    }
+  ],
+  "profile": {
+    "virtualUsers": 5,
+    "rampUpSeconds": 10,
+    "durationSeconds": 60,
+    "maxRequests": 1000,
+    "maxRequestsPerSecond": 5,
+    "stopConditions": {
+      "errorRate": 0.05,
+      "p95LatencyMs": 1000,
+      "maxFailedRequests": 50
+    }
+  }
+}

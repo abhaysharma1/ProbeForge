@@ -1,4 +1,4 @@
-# ProbeForge database
+﻿# ProbeForge database
 
 PostgreSQL 18.6 is the durable source of truth. Phase 2 introduced the schema,
 migration runner, and schema-isolated migration test. Phase 3 adds the first API
@@ -27,7 +27,7 @@ string. The test runner sets `PROBE_FORGE_REQUIRE_DB_TESTS=1`, so a missing
 Migrations live in `migrations/` and are applied by
 `cargo run -p probe-forge-api --bin migrate`, which uses SQLx's runtime migrator.
 
-- **Forward-only.** Migrations are ordered (`0001` … `0010` today) and are never
+- **Forward-only.** Migrations are ordered (`0001` through `0011` today) and are never
   edited after being applied. Fix a mistake with a new migration.
 - **Do not use `sqlx migrate revert` in shared or production environments.** No
   down migrations are maintained. SQLx records applied versions in
@@ -61,6 +61,7 @@ migrator is idempotent because SQLx skips already-applied versions.
 | `0008_plan_review.sql` | `test_plans`, `plan_approvals`, `planned_tests` | Plan selection revision, approval revision evidence, rationale references |
 | `0009_approval_run_match.sql` | `plan_approvals`, `test_runs` | Composite approval/plan/version foreign key for run integrity |
 | `0010_target_validation.sql` | `targets` | Verification timestamp, resolved address evidence, and allowed ports |
+| `0011_load_safety.sql` | `load_profiles` | Platform profile maxima and closed stop-condition keys; new/updated rows enforced with `NOT VALID` constraints |
 
 Every project-scoped table carries `project_id` and cascades from `projects`
 except where a deliberate restriction preserves approval/authorization history.
@@ -106,6 +107,12 @@ constraints above remain the second line of defense.
   different plan version. Updating the scope or limits of a target authorization
   fails; a revocation timestamp is the only permitted update, and authorizations
   cannot be deleted.
+- Load profiles are capped by the contract at 100 VUs or 100 arrivals/s, 300 s
+  ramp, 900 s duration, 100,000 requests, and 100 requests/s. Migration `0011`
+  adds `NOT VALID` database constraints for new/updated rows and closes stop
+  conditions to `errorRate`, `p95LatencyMs`, and `maxFailedRequests`. Existing
+  historical rows are not rewritten by the migration; validate or remediate them
+  before enforcing the constraints on all rows.
 - Job events are append-only and ordered per job. The API emits
   `job.queued`, `job.claimed`, `job.retry_scheduled`, `job.failed`,
   `job.cancelled`, `plan.proposed`, and `run.started`; SSE replay uses the
@@ -129,10 +136,10 @@ constraints above remain the second line of defense.
 3. Applies all migrations, then re-applies to prove idempotence.
 4. Asserts every expected table, key index, plan-review/target-validation
    column, and approval/run constraint exists.
-5. Seeds a complete fixture chain: user → project → Git source → job → snapshot →
-   plan → planned test → approval → target → authorization → load profile →
-   scenario → schedule → run → result → evidence → event → metric → agent session
-   → audit record.
+5. Seeds a complete fixture chain: user â†’ project â†’ Git source â†’ job â†’ snapshot â†’
+   plan â†’ planned test â†’ approval â†’ target â†’ authorization â†’ load profile â†’
+   scenario â†’ schedule â†’ run â†’ result â†’ evidence â†’ event â†’ metric â†’ agent session
+   â†’ audit record.
 6. Asserts unknown goals, duplicate idempotency keys, duplicate event sequences,
    mutable approvals/events/authorizations, failed results without severity,
    duplicate result keys, malformed run shapes, and project FK orphans are

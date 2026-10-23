@@ -257,11 +257,13 @@ function TestCard({
 
 function LoadScenarioCard({
   scenario,
+  planVersion,
   editable,
   checked,
   onChange,
 }: {
   readonly scenario: PlanLoadScenario;
+  readonly planVersion: number;
   readonly editable: boolean;
   readonly checked: boolean;
   readonly onChange: (checked: boolean) => void;
@@ -272,6 +274,16 @@ function LoadScenarioCard({
     profile.virtualUsers === undefined
       ? `${profile.arrivalRatePerSecond ?? 0} arrivals/s`
       : `${profile.virtualUsers} virtual users`;
+  const stopConditions = profile.stopConditions ?? {};
+  const stopConditionText = [
+    stopConditions.errorRate === undefined ? null : `error rate ${stopConditions.errorRate}`,
+    stopConditions.p95LatencyMs === undefined ? null : `p95 ${stopConditions.p95LatencyMs}ms`,
+    stopConditions.maxFailedRequests === undefined
+      ? null
+      : `failed requests ${stopConditions.maxFailedRequests}`,
+  ]
+    .filter((value) => value !== null)
+    .join(" · ");
   return (
     <li
       className={`border-b border-pf-border px-4 py-4 last:border-b-0 ${checked ? "bg-pf-accent-soft/30" : ""}`}
@@ -292,20 +304,64 @@ function LoadScenarioCard({
           <p className="mt-1 text-[12px] leading-5 text-pf-text-secondary">
             {scenario.description}
           </p>
-          <ul className="mt-2 space-y-1">
-            {scenario.requests.map((request) => (
+          <p className="mt-1 text-[10px] text-pf-text-muted">
+            Approval pins this scenario to plan v{planVersion}. No load traffic is sent by approval.
+          </p>
+          <ul className="mt-2 space-y-2">
+            {scenario.requests.map((request, index) => (
               <li
-                key={`${scenario.id}-${request.method}-${request.path}`}
-                className="flex flex-wrap items-center gap-2 font-mono text-[11px]"
+                key={`${scenario.id}-${request.id ?? index}-${request.method}-${request.path}`}
+                className="rounded border border-pf-border bg-pf-surface-muted/40 px-2 py-1.5"
               >
-                <span className="rounded border border-pf-border bg-pf-surface-muted px-1.5 py-0.5 font-medium">
-                  {request.method}
-                </span>
-                <span className="break-all">{request.path}</span>
-                {request.expectedStatuses && request.expectedStatuses.length > 0 ? (
-                  <span className="text-pf-text-muted">
-                    expected {request.expectedStatuses.join(", ")}
+                <div className="flex flex-wrap items-center gap-2 font-mono text-[11px]">
+                  {request.id ? <span className="text-pf-text-muted">{request.id}</span> : null}
+                  <span className="rounded border border-pf-border bg-pf-surface px-1.5 py-0.5 font-medium">
+                    {request.method}
                   </span>
+                  <span className="break-all">{request.path}</span>
+                  {request.method !== "GET" &&
+                  request.method !== "HEAD" &&
+                  request.method !== "OPTIONS" ? (
+                    <span className="text-pf-warning">state-changing method</span>
+                  ) : null}
+                  {request.expectedStatuses.length > 0 ? (
+                    <span className="text-pf-text-muted">
+                      expected {request.expectedStatuses.join(", ")}
+                    </span>
+                  ) : null}
+                  {request.dependsOn && request.dependsOn.length > 0 ? (
+                    <span className="text-pf-text-muted">after {request.dependsOn.join(", ")}</span>
+                  ) : null}
+                </div>
+                {Object.keys(request.secretHeaders ?? {}).length > 0 ? (
+                  <p className="mt-1 text-[10px] text-pf-text-muted">
+                    Secret-backed headers: {Object.keys(request.secretHeaders ?? {}).join(", ")}
+                  </p>
+                ) : null}
+                {request.extract && request.extract.length > 0 ? (
+                  <p className="mt-1 text-[10px] text-pf-text-muted">
+                    Extracts:{" "}
+                    {request.extract
+                      .map(
+                        (extraction) =>
+                          `${extraction.name} from ${extraction.source}:${extraction.selector}`,
+                      )
+                      .join(" · ")}
+                  </p>
+                ) : null}
+                {request.assertions && request.assertions.length > 0 ? (
+                  <p className="mt-1 text-[10px] text-pf-text-muted">
+                    Asserts:{" "}
+                    {request.assertions
+                      .map(
+                        (assertion) =>
+                          `${assertion.source}:${assertion.selector} ${assertion.operator}`,
+                      )
+                      .join(" · ")}
+                  </p>
+                ) : null}
+                {request.bodyTemplate !== undefined ? (
+                  <p className="mt-1 text-[10px] text-pf-text-muted">Body template present</p>
                 ) : null}
               </li>
             ))}
@@ -336,6 +392,10 @@ function LoadScenarioCard({
               <dd className="mt-0.5 break-all font-mono text-[10px]">
                 {scenario.credentialRef ?? "None"}
               </dd>
+            </div>
+            <div className="sm:col-span-3">
+              <dt className="text-[10px] text-pf-text-muted">Stop conditions</dt>
+              <dd className="mt-0.5">{stopConditionText || "No stop conditions"}</dd>
             </div>
           </dl>
         </div>
@@ -676,6 +736,7 @@ export function PlanReview({ job, canEdit, csrfToken, onBack, onSessionExpired }
                     <LoadScenarioCard
                       key={scenario.id}
                       scenario={scenario}
+                      planVersion={plan.version}
                       editable={editable}
                       checked={selectedScenarioIds.includes(scenario.id)}
                       onChange={(checked) => toggleScenario(scenario.id, checked)}

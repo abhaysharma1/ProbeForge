@@ -10,6 +10,9 @@ import {
 } from "./test-helpers";
 import { PHASE_SEVEN_REQUIRED_INPUTS, validateCandidatePlan } from "./validate";
 
+const TOKEN_PLACEHOLDER = "$" + "{token}";
+const MISSING_PLACEHOLDER = "$" + "{missing}";
+
 function issueCodes(result: ReturnType<typeof validateCandidatePlan>): string[] {
   return result.ok ? [] : result.issues.map((issue) => issue.code);
 }
@@ -144,7 +147,7 @@ describe("validateCandidatePlan", () => {
       makeContext({ goal: "load_testing" }),
     );
     expect(unsafe.ok).toBe(false);
-    expect(issueCodes(unsafe)).toContain("unsafe_load_path");
+    expect(issueCodes(unsafe)).toContain("invalid_contract");
   });
 
   it("rejects references outside the bounded snapshot", () => {
@@ -204,6 +207,108 @@ describe("validateCandidatePlan", () => {
     if (!result.ok) return;
     expect(result.plan.requiredInputs).toHaveLength(20);
     expect(result.plan.requiredInputs).toContain(PHASE_SEVEN_REQUIRED_INPUTS.targetAuthorization);
+  });
+
+  it("accepts a correlated load scenario with secret headers and assertions", () => {
+    const base = makeValidLoadPlan().loadScenarios[0];
+    if (base === undefined) throw new Error("load fixture is missing a scenario");
+    const result = validateCandidatePlan(
+      makeValidLoadPlan({
+        loadScenarios: [
+          {
+            ...base,
+            requests: [
+              {
+                id: "session",
+                method: "POST",
+                path: "/api/session",
+                headers: { "Content-Type": "application/json" },
+                secretHeaders: { Authorization: "secret://fixtures/service-token" },
+                extract: [{ name: "token", source: "header", selector: "x-session-token" }],
+                bodyTemplate: { username: "fixture-user" },
+                expectedStatuses: [200],
+              },
+              {
+                id: "profile",
+                method: "GET",
+                path: `/api/profile/${TOKEN_PLACEHOLDER}`,
+                dependsOn: ["session"],
+                headers: { "X-Session": TOKEN_PLACEHOLDER },
+                assertions: [
+                  {
+                    source: "json_body",
+                    selector: "/status",
+                    operator: "equals",
+                    expected: "ok",
+                  },
+                ],
+                expectedStatuses: [200],
+              },
+            ],
+            profile: {
+              ...base.profile,
+              stopConditions: { errorRate: 0.05, p95LatencyMs: 1000 },
+            },
+          },
+        ],
+      }),
+      makeContext({ goal: "load_testing" }),
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects load dependencies, templates, raw secrets, and loop fields", () => {
+    const base = makeValidLoadPlan().loadScenarios[0];
+    if (base === undefined) throw new Error("load fixture is missing a scenario");
+    const request = base.requests[0];
+    if (request === undefined) throw new Error("load fixture is missing a request");
+
+    const dependency = validateCandidatePlan(
+      makeValidLoadPlan({
+        loadScenarios: [
+          {
+            ...base,
+            requests: [{ ...request, dependsOn: ["later"], path: `/api/${MISSING_PLACEHOLDER}` }],
+          },
+        ],
+      }),
+      makeContext({ goal: "load_testing" }),
+    );
+    expect(dependency.ok).toBe(false);
+    expect(issueCodes(dependency)).toContain("invalid_contract");
+
+    const rawSecret = validateCandidatePlan(
+      makeValidLoadPlan({
+        loadScenarios: [
+          {
+            ...base,
+            requests: [
+              {
+                ...request,
+                secretHeaders: { Authorization: "Bearer raw-token-value" },
+              },
+            ],
+          },
+        ],
+      }),
+      makeContext({ goal: "load_testing" }),
+    );
+    expect(rawSecret.ok).toBe(false);
+    expect(issueCodes(rawSecret)).toContain("invalid_contract");
+
+    const loop = validateCandidatePlan(
+      makeValidLoadPlan({
+        loadScenarios: [
+          {
+            ...base,
+            requests: [{ ...request, loop: { while: true } } as typeof request],
+          },
+        ],
+      }),
+      makeContext({ goal: "load_testing" }),
+    );
+    expect(loop.ok).toBe(false);
+    expect(issueCodes(loop)).toContain("invalid_contract");
   });
 
   it("rejects excessively many planned tests and load scenarios", () => {

@@ -37,6 +37,7 @@ Do not resolve a genuine conflict silently. Choose the safest minimal interpreta
 | [PLAN_APPROVAL.md](PLAN_APPROVAL.md) | Versioned test catalog, plan review APIs, optimistic selection, immutable approvals, and UI behavior |
 | [TARGET_VALIDATION.md](TARGET_VALIDATION.md) | Target registration, DNS/IP policy, redirect/scope enforcement, budgets, and authorization records |
 | [EXECUTION_ADAPTERS.md](EXECUTION_ADAPTERS.md) | Native security adapters, catalog mappings, typed configuration, normalized results, and evidence minimization |
+| [LOAD_SCENARIOS.md](LOAD_SCENARIOS.md) | Declarative load steps, correlation/assertions, platform maxima, scope validation, and approval versioning |
 | [phases/](phases/) | One completion report per phase |
 
 ## Phase reports
@@ -54,6 +55,7 @@ Do not resolve a genuine conflict silently. Choose the safest minimal interpreta
 | 8 | [08_plan_approval_report.md](phases/08_plan_approval_report.md) |
 | 9 | [09_target_validation_report.md](phases/09_target_validation_report.md) |
 | 10 | [10_execution_adapters_report.md](phases/10_execution_adapters_report.md) |
+| 11 | [11_load_scenarios_report.md](phases/11_load_scenarios_report.md) |
 
 `docs/frontend_design.md` is an alias that points to the canonical
 [06_frontend_design.md](06_frontend_design.md), because the agent instructions

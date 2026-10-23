@@ -67,22 +67,50 @@ fn load_plan() -> Value {
     json!({
         "schemaVersion": "1",
         "goal": "load_testing",
-        "summary": "A conservative baseline load scenario for a literal discovered route.",
+        "summary": "A conservative correlated load scenario for literal discovered routes.",
         "confidence": 0.61,
         "plannedTests": [],
         "loadScenarios": [
             {
                 "name": "Baseline API read",
-                "description": "Conservative baseline profile for a discovered read-only route.",
+                "description": "Conservative correlated profile for discovered read-only routes.",
                 "requests": [
-                    {"method": "GET", "path": "/api/items", "expectedStatuses": [200]}
+                    {
+                        "id": "session",
+                        "method": "POST",
+                        "path": "/api/session",
+                        "headers": {"Content-Type": "application/json"},
+                        "secretHeaders": {"Authorization": "secret://fixtures/service-token"},
+                        "extract": [
+                            {"name": "token", "source": "header", "selector": "x-session-token"}
+                        ],
+                        "bodyTemplate": {"username": "fixture-user"},
+                        "expectedStatuses": [200]
+                    },
+                    {
+                        "id": "profile",
+                        "method": "GET",
+                        "path": "/api/profile/${token}",
+                        "dependsOn": ["session"],
+                        "headers": {"X-Session": "${token}"},
+                        "assertions": [
+                            {
+                                "source": "json_body",
+                                "selector": "/status",
+                                "operator": "equals",
+                                "expected": "ok"
+                            }
+                        ],
+                        "expectedStatuses": [200]
+                    }
                 ],
                 "profile": {
                     "virtualUsers": 2,
                     "rampUpSeconds": 5,
                     "durationSeconds": 30,
                     "maxRequests": 200,
-                    "maxRequestsPerSecond": 2
+                    "maxRequestsPerSecond": 2,
+                    "stopConditions": {"errorRate": 0.05}
                 }
             }
         ],
@@ -729,6 +757,14 @@ async fn load_plan_selection_and_approval_use_load_scenario_ids() {
     assert_eq!(response.status, StatusCode::OK, "{:?}", response.body);
     assert_eq!(response.body["goal"], "load_testing");
     assert_eq!(
+        response.body["loadScenarios"][0]["requests"][1]["path"],
+        "/api/profile/${token}"
+    );
+    assert_eq!(
+        response.body["loadScenarios"][0]["requests"][0]["secretHeaders"]["Authorization"],
+        "secret://fixtures/service-token"
+    );
+    assert_eq!(
         response.body["approval"]["approvedLoadScenarioIds"]
             .as_array()
             .expect("approved scenarios")
@@ -741,6 +777,61 @@ async fn load_plan_selection_and_approval_use_load_scenario_ids() {
             .expect("approved tests")
             .len(),
         0
+    );
+
+    let snapshot: Value =
+        sqlx::query_scalar("SELECT approval_snapshot FROM plan_approvals WHERE plan_id = $1")
+            .bind(Uuid::parse_str(&fixture.load_plan_id).expect("plan uuid"))
+            .fetch_one(&app.pool)
+            .await
+            .expect("load approval snapshot");
+    assert_eq!(
+        snapshot["loadScenarios"][0]["scenario"]["requests"][1]["dependsOn"][0],
+        "session"
+    );
+    assert_eq!(
+        snapshot["loadScenarios"][0]["scenario"]["profile"]["stopConditions"]["errorRate"],
+        0.05
+    );
+}
+
+#[tokio::test]
+async fn database_rejects_load_profiles_above_platform_maxima_or_open_stop_conditions() {
+    let Some(fixture) = fixture().await else {
+        return;
+    };
+    let project_id = Uuid::parse_str(&fixture.project_id).expect("project uuid");
+
+    let excessive = sqlx::query(
+        r#"
+        INSERT INTO load_profiles (
+            project_id, name, virtual_users, ramp_up_seconds, duration_seconds,
+            max_requests, max_requests_per_second, stop_conditions
+        ) VALUES ($1, 'Excessive fixture', 101, 5, 30, 200, 2, '{}'::jsonb)
+        "#,
+    )
+    .bind(project_id)
+    .execute(&fixture.app.pool)
+    .await;
+    assert!(
+        excessive.is_err(),
+        "profiles above platform maxima must fail"
+    );
+
+    let open_conditions = sqlx::query(
+        r#"
+        INSERT INTO load_profiles (
+            project_id, name, virtual_users, ramp_up_seconds, duration_seconds,
+            max_requests, max_requests_per_second, stop_conditions
+        ) VALUES ($1, 'Open stop fixture', 2, 5, 30, 200, 2, '{"loop": true}'::jsonb)
+        "#,
+    )
+    .bind(project_id)
+    .execute(&fixture.app.pool)
+    .await;
+    assert!(
+        open_conditions.is_err(),
+        "unknown stop-condition keys must fail"
     );
 }
 

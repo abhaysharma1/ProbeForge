@@ -72,6 +72,12 @@ export interface JobCreation {
   readonly git: GitSource;
 }
 
+export interface LoadStopConditions {
+  readonly errorRate?: number;
+  readonly p95LatencyMs?: number;
+  readonly maxFailedRequests?: number;
+}
+
 export interface LoadProfile {
   readonly virtualUsers?: number;
   readonly arrivalRatePerSecond?: number;
@@ -79,15 +85,39 @@ export interface LoadProfile {
   readonly durationSeconds: number;
   readonly maxRequests: number;
   readonly maxRequestsPerSecond: number;
-  readonly stopConditions?: JsonObject;
+  readonly stopConditions?: LoadStopConditions;
+}
+
+export type LoadExtractionSource = "header" | "json_body";
+
+export interface LoadExtraction {
+  readonly name: string;
+  readonly source: LoadExtractionSource;
+  readonly selector: string;
+  readonly required?: boolean;
+}
+
+export type LoadAssertionSource = "header" | "json_body";
+export type LoadAssertionOperator = "equals" | "contains" | "exists";
+
+export interface LoadAssertion {
+  readonly source: LoadAssertionSource;
+  readonly selector: string;
+  readonly operator: LoadAssertionOperator;
+  readonly expected?: JsonValue;
 }
 
 export interface LoadRequest {
+  readonly id?: string;
   readonly method: HttpMethod;
   readonly path: string;
   readonly headers?: Readonly<Record<string, string>>;
+  readonly secretHeaders?: Readonly<Record<string, string>>;
+  readonly dependsOn?: readonly string[];
+  readonly extract?: readonly LoadExtraction[];
+  readonly assertions?: readonly LoadAssertion[];
   readonly bodyTemplate?: JsonValue;
-  readonly expectedStatuses?: readonly number[];
+  readonly expectedStatuses: readonly number[];
 }
 
 export interface LoadScenario {

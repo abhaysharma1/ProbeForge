@@ -153,6 +153,11 @@ const TOOL_GUIDE = `Available action groups:
 Planning policy:
 - The plan goal must equal the job goal.
 - Vulnerability plans use only vetted catalog tests; load plans use bounded load scenarios.
+- Load plans use ordered requests discovered from the repository: assign stable lowercase step ids, include method, same-origin path, and at least one expected status.
+- Use secretHeaders only with secret:// references for credentials. Never place a raw Authorization, Cookie, API key, token, or password in a scenario.
+- Use extract rules to capture a response header or JSON pointer, then reference an earlier extraction as \${name} in a later path, header, or body string. dependsOn may only name earlier step ids.
+- Add bounded header/JSON assertions instead of scripts. Do not invent loops, repeat counts, executable fields, or arbitrary template expressions.
+- Load profiles are capped at 100 virtual users or 100 arrivals/s, 300 seconds ramp, 900 seconds duration, 100000 requests, and 100 requests/s.
 - Cite only repository paths that appear in the snapshot.
 - Request explicit target authorization in requiredInputs; Phase 7 never contacts a target.
 - A vulnerability plan with no suitable catalog entry must request the missing catalog input instead of inventing a test.`;

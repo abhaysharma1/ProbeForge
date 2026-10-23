@@ -1,0 +1,11 @@
+{
+  "virtualUsers": 10,
+  "rampUpSeconds": 30,
+  "durationSeconds": 120,
+  "maxRequests": 5000,
+  "maxRequestsPerSecond": 50,
+  "stopConditions": {
+    "errorRate": 0.05,
+    "loop": true
+  }
+}

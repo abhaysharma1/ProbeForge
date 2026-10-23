@@ -42,6 +42,7 @@ const REQUIRED_FILES = [
   "docs/PLAN_APPROVAL.md",
   "docs/TARGET_VALIDATION.md",
   "docs/EXECUTION_ADAPTERS.md",
+  "docs/LOAD_SCENARIOS.md",
   "docs/06_frontend_design.md",
   "docs/frontend_design.md",
   "docs/01_what_we_are_developing.md",
@@ -60,6 +61,7 @@ const REQUIRED_FILES = [
   "docs/phases/08_plan_approval_report.md",
   "docs/phases/09_target_validation_report.md",
   "docs/phases/10_execution_adapters_report.md",
+  "docs/phases/11_load_scenarios_report.md",
   "infra/local/compose.yaml",
   "crates/contracts/Cargo.toml",
   "crates/execution-adapters/Cargo.toml",
@@ -79,6 +81,7 @@ const REQUIRED_FILES = [
   "migrations/0008_plan_review.sql",
   "migrations/0009_approval_run_match.sql",
   "migrations/0010_target_validation.sql",
+  "migrations/0011_load_safety.sql",
   "packages/contracts/schemas/probeforge.v1.schema.json",
   "packages/contracts/fixtures/v1/manifest.json",
   "services/api/src/bin/migrate.rs",
@@ -110,6 +113,7 @@ const LINKED_DOCS = [
   "docs/PLAN_APPROVAL.md",
   "docs/TARGET_VALIDATION.md",
   "docs/EXECUTION_ADAPTERS.md",
+  "docs/LOAD_SCENARIOS.md",
 ];
 
 // High-signal patterns only; generic words like "password" appear in policy prose on purpose.

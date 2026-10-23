@@ -4,7 +4,7 @@
 //! contain paths and rule descriptions, never the offending values, so a target
 //! URL or credential reference cannot leak through an error response.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -12,9 +12,10 @@ use serde_json::Value;
 use url::Url;
 
 use crate::model::{
-    CONTRACT_SCHEMA_VERSION, JobCreation, JobEvent, LoadProfile, LoadScenario, MAX_CONTRACT_BYTES,
-    Plan, PlannedTest, RunRequest, TargetAuthorization, TargetLimits, TargetScope, TestOutcome,
-    TestResult,
+    CONTRACT_SCHEMA_VERSION, HttpMethod, JobCreation, JobEvent, LoadAssertion,
+    LoadAssertionOperator, LoadAssertionSource, LoadExtraction, LoadExtractionSource, LoadProfile,
+    LoadScenario, LoadStopConditions, MAX_CONTRACT_BYTES, Plan, PlannedTest, RunRequest,
+    TargetAuthorization, TargetLimits, TargetScope, TestOutcome, TestResult,
 };
 
 /// A single deterministic validation problem.
@@ -476,6 +477,10 @@ fn validate_load_scenario_fields(
     path: &str,
     issues: &mut Vec<ValidationIssue>,
 ) {
+    const MAX_LOAD_REQUESTS: usize = 50;
+    const MAX_LOAD_ITEMS: usize = 20;
+    const MAX_LOAD_BODY_BYTES: usize = 64 * 1024;
+
     let path = |field: &str| format!("{path}/{field}");
     check_text(&scenario.name, &path("name"), 160, issues);
     check_text(&scenario.description, &path("description"), 2_000, issues);
@@ -486,21 +491,127 @@ fn validate_load_scenario_fields(
             "a load scenario requires at least one request",
         ));
     }
-    if scenario.requests.len() > 50 {
-        issues.push(issue(path("requests"), "at most 50 requests are allowed"));
+    if scenario.requests.len() > MAX_LOAD_REQUESTS {
+        issues.push(issue(
+            path("requests"),
+            format!("at most {MAX_LOAD_REQUESTS} requests are allowed"),
+        ));
     }
+
+    let mut prior_step_ids = BTreeSet::new();
+    let mut seen_step_ids = BTreeSet::new();
+    let mut extracted_names = BTreeSet::new();
 
     for (index, request) in scenario.requests.iter().enumerate() {
         let request_path = path(&format!("requests/{index}"));
-        check_request_path(&request.path, &format!("{request_path}/path"), issues);
-        check_headers(&request.headers, &format!("{request_path}/headers"), issues);
-        if let Some(body) = &request.body_template {
-            check_safe_json(body, &format!("{request_path}/bodyTemplate"), 0, issues);
+        let request_path_field = format!("{request_path}/path");
+
+        if let Some(step_id) = &request.id {
+            if !is_load_step_id(step_id) {
+                issues.push(issue(
+                    format!("{request_path}/id"),
+                    "step ids must start with a lowercase letter and contain only lowercase letters, digits, underscores, or hyphens",
+                ));
+            }
+            if !seen_step_ids.insert(step_id.clone()) {
+                issues.push(issue(
+                    format!("{request_path}/id"),
+                    "step ids must be unique within a load scenario",
+                ));
+            }
         }
-        if request.expected_statuses.len() > 20 {
+
+        if request.depends_on.len() > MAX_LOAD_ITEMS {
+            issues.push(issue(
+                format!("{request_path}/dependsOn"),
+                format!("at most {MAX_LOAD_ITEMS} dependencies are allowed"),
+            ));
+        }
+        let mut seen_dependencies = BTreeSet::new();
+        for dependency in &request.depends_on {
+            if !seen_dependencies.insert(dependency) {
+                issues.push(issue(
+                    format!("{request_path}/dependsOn"),
+                    "dependencies must be unique",
+                ));
+                continue;
+            }
+            if !prior_step_ids.contains(dependency) {
+                issues.push(issue(
+                    format!("{request_path}/dependsOn"),
+                    "dependencies must refer to an earlier step id",
+                ));
+            }
+        }
+
+        check_request_path(&request.path, &request_path_field, issues);
+        check_template_value(&request.path, &extracted_names, &request_path_field, issues);
+        check_headers(&request.headers, &format!("{request_path}/headers"), issues);
+        check_secret_headers(
+            &request.headers,
+            &request.secret_headers,
+            &format!("{request_path}/secretHeaders"),
+            issues,
+        );
+
+        if request.extract.len() > MAX_LOAD_ITEMS {
+            issues.push(issue(
+                format!("{request_path}/extract"),
+                format!("at most {MAX_LOAD_ITEMS} extraction rules are allowed"),
+            ));
+        }
+        for (extraction_index, extraction) in request.extract.iter().enumerate() {
+            let extraction_path = format!("{request_path}/extract/{extraction_index}");
+            check_load_extraction(extraction, &extraction_path, issues);
+        }
+
+        if request.assertions.len() > MAX_LOAD_ITEMS {
+            issues.push(issue(
+                format!("{request_path}/assertions"),
+                format!("at most {MAX_LOAD_ITEMS} assertions are allowed"),
+            ));
+        }
+        for (assertion_index, assertion) in request.assertions.iter().enumerate() {
+            check_load_assertion(
+                assertion,
+                &format!("{request_path}/assertions/{assertion_index}"),
+                issues,
+            );
+        }
+
+        if let Some(body) = &request.body_template {
+            let body_path = format!("{request_path}/bodyTemplate");
+            check_safe_json(body, &body_path, 0, issues);
+            check_template_json(body, &extracted_names, &body_path, issues);
+            if serde_json::to_vec(body).map_or(usize::MAX, |bytes| bytes.len())
+                > MAX_LOAD_BODY_BYTES
+            {
+                issues.push(issue(
+                    body_path,
+                    format!("load request bodies must not exceed {MAX_LOAD_BODY_BYTES} bytes"),
+                ));
+            }
+            if matches!(
+                request.method,
+                HttpMethod::Get | HttpMethod::Head | HttpMethod::Options
+            ) {
+                issues.push(issue(
+                    format!("{request_path}/bodyTemplate"),
+                    "GET, HEAD, and OPTIONS load requests must not include a body template",
+                ));
+            }
+        }
+
+        if request.expected_statuses.is_empty() {
             issues.push(issue(
                 format!("{request_path}/expectedStatuses"),
-                "at most 20 expected statuses are allowed",
+                "each load request requires at least one expected status",
+            ));
+        }
+        if request.expected_statuses.len() > MAX_LOAD_ITEMS {
+            issues.push(issue(
+                format!("{request_path}/expectedStatuses"),
+                format!("at most {MAX_LOAD_ITEMS} expected statuses are allowed"),
             ));
         }
         for status in &request.expected_statuses {
@@ -511,6 +622,19 @@ fn validate_load_scenario_fields(
                 ));
             }
         }
+
+        for (extraction_index, extraction) in request.extract.iter().enumerate() {
+            if !extracted_names.insert(extraction.name.clone()) {
+                issues.push(issue(
+                    format!("{request_path}/extract/{extraction_index}/name"),
+                    "extraction variable names must be unique within a load scenario",
+                ));
+            }
+        }
+
+        if let Some(step_id) = &request.id {
+            prior_step_ids.insert(step_id.clone());
+        }
     }
 
     validate_load_profile_fields(&scenario.profile, &path("profile"), issues);
@@ -518,6 +642,244 @@ fn validate_load_scenario_fields(
     if let Some(reference) = &scenario.credential_ref {
         check_credential_ref(reference, &path("credentialRef"), issues);
     }
+}
+
+fn check_load_extraction(
+    extraction: &LoadExtraction,
+    path: &str,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    if !is_load_variable_name(&extraction.name) {
+        issues.push(issue(
+            format!("{path}/name"),
+            "extraction names must start with a lowercase letter and contain only lowercase letters, digits, or underscores",
+        ));
+    }
+    match extraction.source {
+        LoadExtractionSource::Header => {
+            if !is_valid_header_name(&extraction.selector) {
+                issues.push(issue(
+                    format!("{path}/selector"),
+                    "header extraction selectors must be valid HTTP header names",
+                ));
+            }
+        }
+        LoadExtractionSource::JsonBody => {
+            check_json_pointer(&extraction.selector, &format!("{path}/selector"), issues);
+        }
+    }
+}
+
+fn check_load_assertion(assertion: &LoadAssertion, path: &str, issues: &mut Vec<ValidationIssue>) {
+    match assertion.source {
+        LoadAssertionSource::Header => {
+            if !is_valid_header_name(&assertion.selector) {
+                issues.push(issue(
+                    format!("{path}/selector"),
+                    "header assertion selectors must be valid HTTP header names",
+                ));
+            }
+        }
+        LoadAssertionSource::JsonBody => {
+            check_json_pointer(&assertion.selector, &format!("{path}/selector"), issues);
+        }
+    }
+
+    match assertion.operator {
+        LoadAssertionOperator::Exists => {
+            if assertion.expected.is_some() {
+                issues.push(issue(
+                    format!("{path}/expected"),
+                    "exists assertions must not include an expected value",
+                ));
+            }
+        }
+        LoadAssertionOperator::Equals | LoadAssertionOperator::Contains => {
+            let Some(expected) = &assertion.expected else {
+                issues.push(issue(
+                    format!("{path}/expected"),
+                    "equals and contains assertions require an expected value",
+                ));
+                return;
+            };
+            if matches!(assertion.operator, LoadAssertionOperator::Contains)
+                && !expected.is_string()
+            {
+                issues.push(issue(
+                    format!("{path}/expected"),
+                    "contains assertions require a string expected value",
+                ));
+            }
+            if matches!(assertion.source, LoadAssertionSource::Header) && !expected.is_string() {
+                issues.push(issue(
+                    format!("{path}/expected"),
+                    "header assertions require a string expected value",
+                ));
+            }
+            if !is_scalar_json_value(expected) {
+                issues.push(issue(
+                    format!("{path}/expected"),
+                    "assertion expected values must be strings, numbers, booleans, or null",
+                ));
+            }
+            if let Value::String(value) = expected
+                && (value.chars().count() > 1_024 || value.chars().any(char::is_control))
+            {
+                issues.push(issue(
+                    format!("{path}/expected"),
+                    "assertion string values must be bounded and control-free",
+                ));
+            }
+        }
+    }
+}
+
+fn check_secret_headers(
+    literal_headers: &BTreeMap<String, String>,
+    secret_headers: &BTreeMap<String, String>,
+    path: &str,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    if secret_headers.len() > 20 {
+        issues.push(issue(
+            path,
+            "at most 20 secret header references are allowed",
+        ));
+    }
+    let mut seen = BTreeSet::new();
+    for (name, reference) in secret_headers {
+        if !is_valid_header_name(name) {
+            issues.push(issue(
+                format!("{path}/{name}"),
+                "header names must be valid HTTP token characters",
+            ));
+        }
+        if !seen.insert(name.to_ascii_lowercase()) {
+            issues.push(issue(
+                format!("{path}/{name}"),
+                "secret header names must be unique ignoring case",
+            ));
+        }
+        if is_forbidden_load_header_name(name) {
+            issues.push(issue(
+                format!("{path}/{name}"),
+                "hop-by-hop and length-managed headers are not allowed",
+            ));
+        }
+        if literal_headers
+            .keys()
+            .any(|literal| literal.eq_ignore_ascii_case(name))
+        {
+            issues.push(issue(
+                format!("{path}/{name}"),
+                "a header cannot be supplied as both literal and secret-backed",
+            ));
+        }
+        check_credential_ref(reference, &format!("{path}/{name}"), issues);
+    }
+}
+
+fn check_template_value(
+    value: &str,
+    extracted_names: &BTreeSet<String>,
+    path: &str,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    let mut remainder = value;
+    while let Some(start) = remainder.find("${") {
+        let after_start = &remainder[start + 2..];
+        let Some(end) = after_start.find('}') else {
+            issues.push(issue(
+                path,
+                "template placeholders must use the form ${name}",
+            ));
+            return;
+        };
+        let name = &after_start[..end];
+        if !is_load_variable_name(name) {
+            issues.push(issue(
+                path,
+                "template placeholders must use a bounded lowercase variable name",
+            ));
+            return;
+        }
+        if !extracted_names.contains(name) {
+            issues.push(issue(
+                path,
+                "template variables must be extracted by an earlier step",
+            ));
+        }
+        remainder = &after_start[end + 1..];
+    }
+}
+
+fn check_template_json(
+    value: &Value,
+    extracted_names: &BTreeSet<String>,
+    path: &str,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    match value {
+        Value::String(text) => check_template_value(text, extracted_names, path, issues),
+        Value::Array(items) => {
+            for (index, item) in items.iter().enumerate() {
+                check_template_json(item, extracted_names, &format!("{path}/{index}"), issues);
+            }
+        }
+        Value::Object(map) => {
+            for (key, item) in map {
+                check_template_json(item, extracted_names, &format!("{path}/{key}"), issues);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) => {}
+    }
+}
+
+fn check_json_pointer(value: &str, path: &str, issues: &mut Vec<ValidationIssue>) {
+    let valid = value.starts_with('/')
+        && value.chars().count() <= 500
+        && !value.chars().any(char::is_control)
+        && !value.contains("${");
+    if !valid {
+        issues.push(issue(
+            path,
+            "JSON selectors must be bounded JSON pointers beginning with /",
+        ));
+    }
+}
+
+fn is_scalar_json_value(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::String(_) | Value::Bool(_) | Value::Null | Value::Number(_)
+    )
+}
+
+fn is_load_variable_name(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    value.len() <= 64
+        && first.is_ascii_lowercase()
+        && chars.all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '_'
+        })
+}
+
+fn is_load_step_id(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    value.len() <= 64
+        && first.is_ascii_lowercase()
+        && chars.all(|character| {
+            character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || character == '_'
+                || character == '-'
+        })
 }
 
 fn validate_load_profile_fields(
@@ -536,56 +898,81 @@ fn validate_load_profile_fields(
     }
 
     if let Some(virtual_users) = profile.virtual_users
-        && !(1..=500).contains(&virtual_users)
+        && !(1..=100).contains(&virtual_users)
     {
         issues.push(issue(
             path("virtualUsers"),
-            "virtualUsers must be between 1 and 500",
+            "virtualUsers must be between 1 and 100",
         ));
     }
     if let Some(arrival_rate) = profile.arrival_rate_per_second
-        && (!arrival_rate.is_finite() || !(0.1..=1_000.0).contains(&arrival_rate))
+        && (!arrival_rate.is_finite() || !(0.1..=100.0).contains(&arrival_rate))
     {
         issues.push(issue(
             path("arrivalRatePerSecond"),
-            "arrivalRatePerSecond must be between 0.1 and 1000",
+            "arrivalRatePerSecond must be between 0.1 and 100",
         ));
     }
 
-    if profile.ramp_up_seconds > 3_600 {
+    if profile.ramp_up_seconds > 300 {
         issues.push(issue(
             path("rampUpSeconds"),
-            "rampUpSeconds must not exceed 3600",
+            "rampUpSeconds must not exceed 300",
         ));
     }
-    if !(1..=3_600).contains(&profile.duration_seconds) {
+    if !(1..=900).contains(&profile.duration_seconds) {
         issues.push(issue(
             path("durationSeconds"),
-            "durationSeconds must be between 1 and 3600",
+            "durationSeconds must be between 1 and 900",
         ));
     }
-    if !(1..=1_000_000).contains(&profile.max_requests) {
+    if !(1..=100_000).contains(&profile.max_requests) {
         issues.push(issue(
             path("maxRequests"),
-            "maxRequests must be between 1 and 1000000",
+            "maxRequests must be between 1 and 100000",
         ));
     }
     if !profile.max_requests_per_second.is_finite()
-        || !(0.1..=1_000.0).contains(&profile.max_requests_per_second)
+        || !(0.1..=100.0).contains(&profile.max_requests_per_second)
     {
         issues.push(issue(
             path("maxRequestsPerSecond"),
-            "maxRequestsPerSecond must be between 0.1 and 1000",
+            "maxRequestsPerSecond must be between 0.1 and 100",
         ));
     }
 
-    if !profile.stop_conditions.is_object() {
+    validate_load_stop_conditions(&profile.stop_conditions, &path("stopConditions"), issues);
+}
+
+fn validate_load_stop_conditions(
+    conditions: &LoadStopConditions,
+    path: &str,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    if let Some(error_rate) = conditions.error_rate
+        && (!error_rate.is_finite() || !(0.0..=1.0).contains(&error_rate))
+    {
         issues.push(issue(
-            path("stopConditions"),
-            "stopConditions must be a JSON object",
+            format!("{path}/errorRate"),
+            "errorRate must be between 0 and 1",
         ));
     }
-    check_safe_json(&profile.stop_conditions, &path("stopConditions"), 0, issues);
+    if let Some(latency) = conditions.p95_latency_ms
+        && !(1..=60_000).contains(&latency)
+    {
+        issues.push(issue(
+            format!("{path}/p95LatencyMs"),
+            "p95LatencyMs must be between 1 and 60000",
+        ));
+    }
+    if let Some(failed) = conditions.max_failed_requests
+        && !(1..=100_000).contains(&failed)
+    {
+        issues.push(issue(
+            format!("{path}/maxFailedRequests"),
+            "maxFailedRequests must be between 1 and 100000",
+        ));
+    }
 }
 
 fn validate_scope(scope: &crate::model::TargetScope, issues: &mut Vec<ValidationIssue>) {
@@ -864,11 +1251,13 @@ fn check_request_path(value: &str, path: &str, issues: &mut Vec<ValidationIssue>
     let valid = value.starts_with('/')
         && value.chars().count() <= 2_000
         && !value.contains("..")
+        && !value.contains("//")
+        && !value.contains('\\')
         && !value.chars().any(char::is_control);
     if !valid {
         issues.push(issue(
             path,
-            "must be an absolute path without traversal segments",
+            "must be an absolute path without traversal or separator escapes",
         ));
     }
 }
@@ -898,6 +1287,12 @@ fn check_headers(
                 "credential-bearing headers must use credentialRef instead",
             ));
         }
+        if is_forbidden_load_header_name(name) {
+            issues.push(issue(
+                format!("{path}/{name}"),
+                "hop-by-hop and length-managed headers are not allowed",
+            ));
+        }
         if value.chars().count() > 1_024 {
             issues.push(issue(
                 format!("{path}/{name}"),
@@ -919,6 +1314,13 @@ fn is_valid_header_name(name: &str) -> bool {
         && name
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte))
+}
+
+fn is_forbidden_load_header_name(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "host" | "content-length" | "transfer-encoding" | "connection" | "keep-alive"
+    )
 }
 
 fn check_safe_json(value: &Value, path: &str, depth: usize, issues: &mut Vec<ValidationIssue>) {
@@ -1002,5 +1404,92 @@ fn finish(issues: Vec<ValidationIssue>) -> Result<(), Vec<ValidationIssue>> {
         Ok(())
     } else {
         Err(issues)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn load_stop_conditions_must_be_an_object() {
+        let value = json!({
+            "virtualUsers": 10,
+            "rampUpSeconds": 30,
+            "durationSeconds": 120,
+            "maxRequests": 5000,
+            "maxRequestsPerSecond": 50,
+            "stopConditions": []
+        });
+        assert!(validate_load_profile(&value).is_err());
+    }
+
+    fn valid_load_scenario() -> Value {
+        json!({
+            "name": "Bounded fixture flow",
+            "description": "Bounded local fixture; no traffic is sent.",
+            "requests": [{
+                "id": "first",
+                "method": "GET",
+                "path": "/api/items",
+                "expectedStatuses": [200]
+            }],
+            "profile": {
+                "virtualUsers": 2,
+                "rampUpSeconds": 5,
+                "durationSeconds": 30,
+                "maxRequests": 200,
+                "maxRequestsPerSecond": 2
+            }
+        })
+    }
+
+    #[test]
+    fn load_scenario_enforces_platform_maxima_and_rejects_loops() {
+        assert!(validate_load_scenario(&valid_load_scenario()).is_ok());
+
+        let mut excessive = valid_load_scenario();
+        excessive["profile"]["virtualUsers"] = json!(101);
+        assert!(validate_load_scenario(&excessive).is_err());
+
+        let mut loop_attempt = valid_load_scenario();
+        loop_attempt["requests"][0]["loop"] = json!({"while": true});
+        assert!(validate_load_scenario(&loop_attempt).is_err());
+    }
+
+    #[test]
+    fn load_scenario_rejects_oversized_bodies_and_script_templates() {
+        let mut oversized = valid_load_scenario();
+        oversized["requests"][0]["method"] = json!("POST");
+        oversized["requests"][0]["bodyTemplate"] = json!({"payload": "x".repeat(70 * 1024)});
+        assert!(validate_load_scenario(&oversized).is_err());
+
+        let mut expression = valid_load_scenario();
+        expression["requests"][0]["path"] = json!("/api/${process.env.SECRET}");
+        assert!(validate_load_scenario(&expression).is_err());
+    }
+
+    #[test]
+    fn load_scenario_rejects_same_step_correlation_references() {
+        let mut scenario = valid_load_scenario();
+        scenario["requests"][0]["method"] = json!("POST");
+        scenario["requests"][0]["extract"] = json!([
+            {"name": "token", "source": "header", "selector": "x-session-token"}
+        ]);
+        scenario["requests"][0]["bodyTemplate"] = json!({"token": "${token}"});
+        assert!(validate_load_scenario(&scenario).is_err());
+    }
+
+    #[test]
+    fn load_scenario_requires_earlier_dependencies_and_secret_references() {
+        let mut dependency = valid_load_scenario();
+        dependency["requests"][0]["dependsOn"] = json!(["later"]);
+        assert!(validate_load_scenario(&dependency).is_err());
+
+        let mut raw_secret = valid_load_scenario();
+        raw_secret["requests"][0]["secretHeaders"] =
+            json!({"Authorization": "Bearer raw-token-value"});
+        assert!(validate_load_scenario(&raw_secret).is_err());
     }
 }
