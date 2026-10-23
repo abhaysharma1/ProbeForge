@@ -8,6 +8,7 @@ use axum::{
     http::{HeaderMap, Method, Request, StatusCode, header},
 };
 use probe_forge_api::{AppState, AuthConfig, auth::password::hash_password, router};
+use probe_forge_target_policy::TargetPolicy;
 use serde_json::{Value, json};
 use sqlx::{PgPool, migrate::Migrator, postgres::PgPoolOptions};
 use tower::ServiceExt;
@@ -41,6 +42,14 @@ pub struct Session {
 
 impl TestApp {
     pub async fn setup() -> Option<Self> {
+        Self::setup_with_target_policy(TargetPolicy::default()).await
+    }
+
+    pub async fn setup_with_private_targets() -> Option<Self> {
+        Self::setup_with_target_policy(TargetPolicy::local_test()).await
+    }
+
+    async fn setup_with_target_policy(target_policy: TargetPolicy) -> Option<Self> {
         let database_url = match std::env::var("DATABASE_URL") {
             Ok(value) if !value.trim().is_empty() => value,
             _ => {
@@ -91,7 +100,8 @@ impl TestApp {
             .expect("migrations directory could not be loaded");
         migrator.run(&pool).await.expect("migrations failed");
 
-        let state = AppState::new(pool.clone(), AuthConfig::local_test());
+        let state =
+            AppState::new_with_target_policy(pool.clone(), AuthConfig::local_test(), target_policy);
         let router = router(state);
 
         Some(Self {

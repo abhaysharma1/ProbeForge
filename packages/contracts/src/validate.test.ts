@@ -8,6 +8,7 @@ import {
   validateContractJson,
   validateJobCreation,
   validateLoadScenario,
+  validateTargetAuthorization,
   validators,
 } from "./validate";
 
@@ -59,5 +60,20 @@ describe("contract validation boundaries", () => {
 
   it("does not treat a valid plan as a load scenario", () => {
     expect(validateLoadScenario(fixture("plan.load.valid.json")).ok).toBe(false);
+  });
+
+  it("matches IPv6 allowed hosts without requiring URL brackets", () => {
+    const authorization = fixture("authorization.valid.json") as {
+      scope: {
+        origin: string;
+        allowedHosts: string[];
+        allowedPorts: number[];
+      };
+    };
+    authorization.scope.origin = "https://[::1]:8443";
+    authorization.scope.allowedHosts = ["::1"];
+    authorization.scope.allowedPorts = [8443];
+
+    expect(validateTargetAuthorization(authorization).ok).toBe(true);
   });
 });

@@ -2,6 +2,7 @@
 members = [
     "crates/contracts",
     "crates/queue",
+    "crates/target-policy",
     "services/api",
     "services/scheduler",
     "services/execution-worker",
@@ -26,6 +27,8 @@ futures-core = "0.3.31"
 getrandom = "0.3.4"
 probeforge-contracts = { path = "crates/contracts" }
 probe-forge-queue = { path = "crates/queue" }
+probe-forge-target-policy = { path = "crates/target-policy" }
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
 rpassword = "7.5.4"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
@@ -33,7 +36,7 @@ sha2 = "0.10.9"
 sqlx = { version = "0.9.0", default-features = false, features = ["chrono", "json", "macros", "migrate", "postgres", "runtime-tokio", "uuid"] }
 subtle = "2.6.1"
 thiserror = "2.0.21"
-tokio = { version = "1.54.1", features = ["macros", "net", "rt-multi-thread", "signal"] }
+tokio = { version = "1.54.1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tower-http = { version = "0.7.1", features = ["limit", "timeout", "trace"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

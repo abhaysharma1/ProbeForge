@@ -450,9 +450,10 @@ function checkLoadProfile(profile: LoadProfile, path: string, issues: Validation
 function checkScope(authorization: TargetAuthorization, issues: ValidationIssue[]): void {
   const origin = checkOrigin(authorization.scope.origin, "/scope/origin", issues);
   if (origin) {
+    const originHost = origin.hostname.replace(/^\[/, "").replace(/\]$/, "");
     if (
       !authorization.scope.allowedHosts.some(
-        (host) => host.toLowerCase() === origin.hostname.toLowerCase(),
+        (host) => host.toLowerCase() === originHost.toLowerCase(),
       )
     ) {
       issues.push(issue("/scope/allowedHosts", "allowedHosts must include the origin host"));

@@ -27,7 +27,7 @@ string. The test runner sets `PROBE_FORGE_REQUIRE_DB_TESTS=1`, so a missing
 Migrations live in `migrations/` and are applied by
 `cargo run -p probe-forge-api --bin migrate`, which uses SQLx's runtime migrator.
 
-- **Forward-only.** Migrations are ordered (`0001` … `0009` today) and are never
+- **Forward-only.** Migrations are ordered (`0001` … `0010` today) and are never
   edited after being applied. Fix a mistake with a new migration.
 - **Do not use `sqlx migrate revert` in shared or production environments.** No
   down migrations are maintained. SQLx records applied versions in
@@ -60,6 +60,7 @@ migrator is idempotent because SQLx skips already-applied versions.
 | `0007_auth_sessions.sql` | `users`, `auth_sessions`, `auth_login_attempts` | Argon2id password hash, opaque session-token digests, revocation/expiry indexes, hashed login-rate-limit keys |
 | `0008_plan_review.sql` | `test_plans`, `plan_approvals`, `planned_tests` | Plan selection revision, approval revision evidence, rationale references |
 | `0009_approval_run_match.sql` | `plan_approvals`, `test_runs` | Composite approval/plan/version foreign key for run integrity |
+| `0010_target_validation.sql` | `targets` | Verification timestamp, resolved address evidence, and allowed ports |
 
 Every project-scoped table carries `project_id` and cascades from `projects`
 except where a deliberate restriction preserves approval/authorization history.
@@ -93,6 +94,10 @@ constraints above remain the second line of defense.
 - Only `vulnerability_testing` and `load_testing` are legal job goals.
 - `vulnerability_testing` runs require a planned test and no load scenario;
   `load_testing` runs require a scenario and profile and no planned test.
+- Target scopes are normalized and server-validated. `targets.allowed_ports`,
+  verification timestamp, and resolved-address evidence were added in migration
+  `0010`. Target authorization scope, limits, and confirmation are immutable;
+  only `revoked_at` may be set once.
 - Plan selection changes increment `test_plans.revision` and require the
   reviewed revision. A `plan_approvals` row records the selected tests or
   scenarios, the reviewed revision, and an immutable snapshot; it cannot be
@@ -122,8 +127,8 @@ constraints above remain the second line of defense.
 1. Creates a random schema (`pf_test_<pid>_<nanos>`), never `public`.
 2. Creates a pool whose connections set `search_path` to that schema.
 3. Applies all migrations, then re-applies to prove idempotence.
-4. Asserts every expected table, key index, plan-review column, and
-   approval/run constraint exists.
+4. Asserts every expected table, key index, plan-review/target-validation
+   column, and approval/run constraint exists.
 5. Seeds a complete fixture chain: user → project → Git source → job → snapshot →
    plan → planned test → approval → target → authorization → load profile →
    scenario → schedule → run → result → evidence → event → metric → agent session

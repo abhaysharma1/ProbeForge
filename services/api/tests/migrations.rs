@@ -188,6 +188,20 @@ async fn migrations_create_and_enforce_core_schema() {
         "migration 0008 did not add plan review revision columns"
     );
 
+    let target_validation_columns: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM information_schema.columns
+         WHERE table_schema = current_schema()
+           AND table_name = 'targets'
+           AND column_name IN ('verification_checked_at', 'verified_addresses', 'allowed_ports')",
+    )
+    .fetch_one(&schema_pool)
+    .await
+    .expect("target validation column inventory failed");
+    assert_eq!(
+        target_validation_columns, 3,
+        "migration 0010 did not add target validation columns"
+    );
+
     let approval_run_constraint: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_constraint
          WHERE connamespace = current_schema()::regnamespace

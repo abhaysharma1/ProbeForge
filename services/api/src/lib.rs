@@ -6,6 +6,7 @@ pub mod error;
 pub mod jobs;
 pub mod plans;
 pub mod projects;
+pub mod targets;
 
 use std::{fmt, net::SocketAddr, sync::Arc, time::Duration};
 
@@ -23,6 +24,8 @@ use thiserror::Error;
 use tower_http::{limit::RequestBodyLimitLayer, trace::TraceLayer};
 use tracing::info;
 use url::Url;
+
+use probe_forge_target_policy::TargetPolicy;
 
 pub const SERVICE_NAME: &str = "probe-forge-api";
 
@@ -44,6 +47,7 @@ pub struct Config {
     pub bind_addr: SocketAddr,
     pub database_url: String,
     pub auth: AuthConfig,
+    pub target_policy: TargetPolicy,
 }
 
 #[derive(Debug, Clone)]
@@ -76,6 +80,10 @@ impl fmt::Debug for Config {
             .field("bind_addr", &self.bind_addr)
             .field("database_url", &"<redacted>")
             .field("auth", &self.auth)
+            .field(
+                "allow_private_targets",
+                &self.target_policy.allow_private_networks,
+            )
             .finish()
     }
 }
@@ -120,6 +128,7 @@ impl Config {
         let origins_value = std::env::var("PROBE_FORGE_ALLOWED_ORIGINS")
             .unwrap_or_else(|_| DEFAULT_ALLOWED_ORIGINS.to_owned());
         let allowed_origins = parse_allowed_origins(&origins_value)?;
+        let allow_private_targets = parse_bool("PROBE_FORGE_ALLOW_PRIVATE_TARGETS", false)?;
 
         Ok(Self {
             bind_addr,
@@ -132,6 +141,10 @@ impl Config {
                 login_attempt_limit: LOGIN_ACCOUNT_ATTEMPT_LIMIT,
                 login_ip_attempt_limit: LOGIN_IP_ATTEMPT_LIMIT,
             },
+            target_policy: TargetPolicy {
+                allow_private_networks: allow_private_targets,
+                ..TargetPolicy::default()
+            },
         })
     }
 }
@@ -140,6 +153,7 @@ impl Config {
 pub struct AppState {
     pub pool: PgPool,
     pub config: Arc<AuthConfig>,
+    pub target_policy: Arc<TargetPolicy>,
 }
 
 impl AppState {
@@ -147,6 +161,19 @@ impl AppState {
         Self {
             pool,
             config: Arc::new(config),
+            target_policy: Arc::new(TargetPolicy::default()),
+        }
+    }
+
+    pub fn new_with_target_policy(
+        pool: PgPool,
+        config: AuthConfig,
+        target_policy: TargetPolicy,
+    ) -> Self {
+        Self {
+            pool,
+            config: Arc::new(config),
+            target_policy: Arc::new(target_policy),
         }
     }
 }
@@ -177,6 +204,7 @@ pub fn router(state: AppState) -> Router {
         .merge(projects::routes())
         .merge(jobs::routes())
         .merge(plans::routes())
+        .merge(targets::routes())
         // Authentication runs before CSRF so an anonymous unsafe request gets a
         // consistent 401 rather than a CSRF 403. Authenticated unsafe requests
         // still pass through the CSRF guard.
@@ -289,7 +317,7 @@ pub async fn serve(config: Config) -> Result<(), ServeError> {
 
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
     info!(addr = %config.bind_addr, service = SERVICE_NAME, "service listening");
-    let state = AppState::new(pool, config.auth);
+    let state = AppState::new_with_target_policy(pool, config.auth, config.target_policy);
     axum::serve(
         listener,
         router(state).into_make_service_with_connect_info::<SocketAddr>(),

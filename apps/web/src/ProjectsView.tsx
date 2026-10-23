@@ -47,6 +47,11 @@ const ACTION_LABELS: Record<string, string> = {
   "project.owner_transferred": "Transferred ownership",
   "plan.selection_updated": "Updated plan selection",
   "plan.approved": "Approved plan",
+  "target.created": "Registered target",
+  "target.validated": "Validated target destination",
+  "target.validation_failed": "Rejected target destination",
+  "target.authorization_created": "Authorized target",
+  "target.authorization_revoked": "Revoked target authorization",
 };
 
 const JOB_GOAL_LABELS: Record<Job["goal"], string> = {

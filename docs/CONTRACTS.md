@@ -127,6 +127,28 @@ existing `job.queued`, `job.failed`, and `job.cancelled` remain valid. A shared
 Rust/TypeScript fixture (`event.claimed.valid.json`) verifies the new enum value
 in both validators.
 
+## Target authorization API
+
+Phase 9 exposes project-scoped target management:
+
+- `GET /api/projects/{projectId}/targets` and `POST /api/projects/{projectId}/targets`
+  register and list normalized target origins, environments, allowed hosts,
+  paths, and ports.
+- `GET /api/targets/{targetId}` returns the target and its authorization history.
+- `POST /api/targets/{targetId}/validate` resolves the host and records the
+  server-validated address set.
+- `GET` and `POST /api/targets/{targetId}/authorizations` list or create
+  explicit, time-bounded authorizations with bounded `TargetLimits`.
+- `POST /api/target-authorizations/{authorizationId}/revoke` revokes an
+  authorization once.
+
+The server denies loopback, private, link-local, metadata, multicast, reserved,
+and documentation destinations by default. Explicit private-target mode is
+server-configured, still blocks metadata/link-local ranges, and is disabled by
+default. Redirects, DNS changes, and request paths are revalidated against scope
+at the connection boundary. The v1 `TargetScope`/`TargetLimits` shapes are
+unchanged; target registration and validation add server-owned policy.
+
 ## Plan review and approval API
 
 The v1 plan payload remains read-only after generation. Phase 8 adds selection and

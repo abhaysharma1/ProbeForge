@@ -65,6 +65,12 @@ impl ProjectRole {
         !matches!(self, Self::Viewer)
     }
 
+    /// Target registration, validation, authorization, and revocation are
+    /// write operations. Viewers may read target state only.
+    pub(crate) fn can_manage_targets(self) -> bool {
+        !matches!(self, Self::Viewer)
+    }
+
     /// Owner may manage admins, collaborators, and viewers. Admin may manage
     /// only collaborators and viewers. The owner role changes only through the
     /// dedicated ownership-transfer operation.

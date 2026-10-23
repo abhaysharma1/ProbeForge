@@ -1,6 +1,6 @@
-// Run the schema, auth/RBAC, job API/SSE, plan approval, and queue integration
-// tests. A real database is required; each test creates and drops an isolated
-// schema and never touches `public`.
+// Run the schema, auth/RBAC, job API/SSE, plan approval, target authorization,
+// and queue integration tests. A real database is required; each test creates
+// and drops an isolated schema and never touches `public`.
 import { spawnSync } from "node:child_process";
 
 const databaseUrl = process.env.DATABASE_URL?.trim();
@@ -19,7 +19,7 @@ const env = {
 
 const commands = [
   [
-    "api schema/auth/jobs/plans",
+    "api schema/auth/jobs/plans/targets",
     [
       "test",
       "-p",
@@ -32,6 +32,8 @@ const commands = [
       "jobs_queue",
       "--test",
       "plans_approval",
+      "--test",
+      "targets_authorization",
       "--",
       "--nocapture",
     ],

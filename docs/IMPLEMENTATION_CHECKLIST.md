@@ -235,24 +235,32 @@ Legend: `[x]` done with evidence - `[ ]` not done.
 
 ## Phase 9 — Target validation and authorization
 
-**Status:** Not started
+**Status:** Complete
 
 **Tasks**
 
-- [ ] Build target registration and normalized origin handling
-- [ ] Capture authorization confirmation, scope, allowed paths/hosts, environment, and limits
-- [ ] Implement URL and DNS/IP validation, redirect validation, and destination checks at connection time
-- [ ] Block unsafe internal and metadata destinations by default
-- [ ] Implement separate policy for any explicitly supported private-network targets
-- [ ] Add per-run rate, concurrency, duration, request-count, response-size, and total-data budgets
-- [ ] Add an authorization expiry and revalidation strategy
-- [ ] Add cancellation and audit records
+- [x] Build target registration and normalized origin handling
+- [x] Capture authorization confirmation, scope, allowed paths/hosts, environment, and limits
+- [x] Implement URL and DNS/IP validation, redirect validation, and destination checks at connection time
+- [x] Block unsafe internal and metadata destinations by default
+- [x] Implement separate policy for any explicitly supported private-network targets
+- [x] Add per-run rate, concurrency, duration, request-count, response-size, and total-data budgets
+- [x] Add an authorization expiry and revalidation strategy
+- [x] Add cancellation and audit records
 
 **Exit gate**
 
-- [ ] Unit/integration tests cover invalid schemes, redirect escapes, private/link-local addresses, metadata ranges, DNS changes, disallowed ports, and scope escapes
-- [ ] Target validation does not rely solely on the AI prompt
-- [ ] No tests are sent to a real target
+- [x] Unit/integration tests cover invalid schemes, redirect escapes, private/link-local addresses, metadata ranges, DNS changes, disallowed ports, and scope escapes
+- [x] Target validation does not rely solely on the AI prompt
+- [x] No tests are sent to a real target
+
+**Evidence**
+
+- Policy/client: `crates/target-policy/src/lib.rs`
+- API and persistence: `services/api/src/targets.rs`, `migrations/0010_target_validation.sql`
+- Tests: `target_policy` unit tests, 5 `targets_authorization` integration tests, `cargo test --workspace`, `bun run check:db`, `bun run check` (analysis worker 111 pass / 7 skip; contracts 47; test-catalog 6; web 8)
+- UI: target management is API-only in this phase; project audit labels include target actions
+- Report: `docs/phases/09_target_validation_report.md`; design: `docs/TARGET_VALIDATION.md`
 
 ## Phase 10 — Security execution adapters
 

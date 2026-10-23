@@ -13,7 +13,8 @@ use url::Url;
 
 use crate::model::{
     CONTRACT_SCHEMA_VERSION, JobCreation, JobEvent, LoadProfile, LoadScenario, MAX_CONTRACT_BYTES,
-    Plan, PlannedTest, RunRequest, TargetAuthorization, TestOutcome, TestResult,
+    Plan, PlannedTest, RunRequest, TargetAuthorization, TargetLimits, TargetScope, TestOutcome,
+    TestResult,
 };
 
 /// A single deterministic validation problem.
@@ -110,6 +111,29 @@ pub fn validate_load_profile(value: &Value) -> Result<LoadProfile, ContractError
 
 pub fn validate_target_authorization(value: &Value) -> Result<TargetAuthorization, ContractError> {
     deserialize_and_validate::<TargetAuthorization>(value)
+}
+
+/// Validate only the target scope shape and invariants. API target
+/// registration uses this before applying stricter destination/port policy.
+pub fn validate_target_scope(scope: &TargetScope) -> Result<(), ContractError> {
+    let mut issues = Vec::new();
+    validate_scope(scope, &mut issues);
+    if issues.is_empty() {
+        Ok(())
+    } else {
+        Err(ContractError::from_issues(issues))
+    }
+}
+
+/// Validate only the authorization limits, independent of a full authorization.
+pub fn validate_target_limits(limits: &TargetLimits) -> Result<(), ContractError> {
+    let mut issues = Vec::new();
+    validate_target_limits_fields(limits, &mut issues);
+    if issues.is_empty() {
+        Ok(())
+    } else {
+        Err(ContractError::from_issues(issues))
+    }
 }
 
 pub fn validate_run_request(value: &Value) -> Result<RunRequest, ContractError> {
@@ -273,7 +297,7 @@ impl Validate for TargetAuthorization {
         }
 
         validate_scope(&self.scope, &mut issues);
-        validate_target_limits(&self.limits, &mut issues);
+        validate_target_limits_fields(&self.limits, &mut issues);
 
         if let (Some(valid_from), Some(expires_at)) = (self.valid_from, self.expires_at)
             && expires_at <= valid_from
@@ -601,16 +625,18 @@ fn validate_scope(scope: &crate::model::TargetScope, issues: &mut Vec<Validation
     }
 
     if let Some(origin) = origin {
-        if let Some(host) = origin.host_str()
-            && !scope
+        if let Some(host) = origin.host_str() {
+            let host = host.trim_start_matches('[').trim_end_matches(']');
+            if !scope
                 .allowed_hosts
                 .iter()
                 .any(|allowed| allowed.eq_ignore_ascii_case(host))
-        {
-            issues.push(issue(
-                "/scope/allowedHosts",
-                "allowedHosts must include the origin host",
-            ));
+            {
+                issues.push(issue(
+                    "/scope/allowedHosts",
+                    "allowedHosts must include the origin host",
+                ));
+            }
         }
         if let Some(port) = origin.port_or_known_default()
             && !scope.allowed_ports.contains(&port)
@@ -623,7 +649,10 @@ fn validate_scope(scope: &crate::model::TargetScope, issues: &mut Vec<Validation
     }
 }
 
-fn validate_target_limits(limits: &crate::model::TargetLimits, issues: &mut Vec<ValidationIssue>) {
+fn validate_target_limits_fields(
+    limits: &crate::model::TargetLimits,
+    issues: &mut Vec<ValidationIssue>,
+) {
     if !limits.max_requests_per_second.is_finite()
         || !(0.1..=1_000.0).contains(&limits.max_requests_per_second)
     {

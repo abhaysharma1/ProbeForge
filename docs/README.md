@@ -35,6 +35,7 @@ Do not resolve a genuine conflict silently. Choose the safest minimal interpreta
 | [DISCOVERY.md](DISCOVERY.md) | Static application inventory, supported parsers, provenance, ambiguity, limits, and the bounded Pi discovery toolset |
 | [PLANNING.md](PLANNING.md) | Pi planning, tool registry, plan validation, budgets, fallback, versioning, and persistence |
 | [PLAN_APPROVAL.md](PLAN_APPROVAL.md) | Versioned test catalog, plan review APIs, optimistic selection, immutable approvals, and UI behavior |
+| [TARGET_VALIDATION.md](TARGET_VALIDATION.md) | Target registration, DNS/IP policy, redirect/scope enforcement, budgets, and authorization records |
 | [phases/](phases/) | One completion report per phase |
 
 ## Phase reports
@@ -50,6 +51,7 @@ Do not resolve a genuine conflict silently. Choose the safest minimal interpreta
 | 6 | [06_static_discovery_report.md](phases/06_static_discovery_report.md) |
 | 7 | [07_planning_report.md](phases/07_planning_report.md) |
 | 8 | [08_plan_approval_report.md](phases/08_plan_approval_report.md) |
+| 9 | [09_target_validation_report.md](phases/09_target_validation_report.md) |
 
 `docs/frontend_design.md` is an alias that points to the canonical
 [06_frontend_design.md](06_frontend_design.md), because the agent instructions
