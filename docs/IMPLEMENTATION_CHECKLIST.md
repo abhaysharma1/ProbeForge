@@ -125,28 +125,28 @@ Legend: `[x]` done with evidence - `[ ]` not done.
 
 ## Phase 5 — Read-only Git ingestion
 
-**Status:** Not started
+**Status:** Complete
 
 **Tasks**
 
-- [ ] Implement supported Git URL validation and repository access credentials through secret references
-- [ ] Resolve branch/tag references to immutable commit SHA
-- [ ] Clone a pinned commit into a unique temporary workspace using safe argument handling
-- [ ] Handle timeouts, disk limits, file-count limits, symlinks, submodules, and cleanup
-- [ ] Avoid leaking credentials in Git remote strings or logs
-- [ ] Inspect directory structure and source files with bounded reads
-- [ ] Read package manifests and lockfiles as data only
-- [ ] Explicitly prohibit package installation, build, tests, application startup, and arbitrary project scripts
-- [ ] Add an audit trail for snapshot creation and cleanup
-- [ ] Build inert fixture repositories covering supported languages and malformed/oversized files
+- [x] Implement supported Git URL validation and repository access credentials through secret references
+- [x] Resolve branch/tag references to immutable commit SHA
+- [x] Clone a pinned commit into a unique temporary workspace using safe argument handling
+- [x] Handle timeouts, disk limits, file-count limits, symlinks, submodules, and cleanup
+- [x] Avoid leaking credentials in Git remote strings or logs
+- [x] Inspect directory structure and source files with bounded reads
+- [x] Read package manifests and lockfiles as data only
+- [x] Explicitly prohibit package installation, build, tests, application startup, and arbitrary project scripts
+- [x] Add an audit trail for snapshot creation and cleanup
+- [x] Build inert fixture repositories covering supported languages and malformed/oversized files
 
 **Exit gate**
 
-- [ ] Tests prove repository content is never executed
-- [ ] The worker can analyze a local inert fixture at a pinned commit
-- [ ] Invalid URL schemes and unsafe paths are rejected
-- [ ] Workspace cleanup is tested on success, failure, and cancellation
-- [ ] No live repository or external target security test is run
+- [x] Tests prove repository content is never executed
+- [x] The worker can analyze a local inert fixture at a pinned commit
+- [x] Invalid URL schemes and unsafe paths are rejected
+- [x] Workspace cleanup is tested on success, failure, and cancellation
+- [x] No live repository or external target security test is run
 
 ## Phase 6 — Static discovery and application model
 

@@ -1,0 +1,10 @@
+# This file is locked fixture data. It is parsed as text, never installed.
+version = 3
+
+[[package]]
+name = "inert-probeforge-fixture"
+version = "0.1.0"
+
+[[package]]
+name = "axum"
+version = "0.8.0"

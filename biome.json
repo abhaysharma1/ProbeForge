@@ -1,7 +1,15 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.6.2/schema.json",
   "files": {
-    "includes": ["**", "!**/dist", "!**/target", "!**/node_modules", "!**/docs", "!**/*.md"]
+    "includes": [
+      "**",
+      "!**/dist",
+      "!**/target",
+      "!**/node_modules",
+      "!**/docs",
+      "!**/*.md",
+      "!services/analysis-worker/fixtures"
+    ]
   },
   "formatter": {
     "enabled": true,

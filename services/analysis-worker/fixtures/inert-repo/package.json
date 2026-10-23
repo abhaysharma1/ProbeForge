@@ -1,0 +1,21 @@
+{
+  "name": "inert-probeforge-fixture",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "preinstall": "node scripts/pwn.js",
+    "install": "node scripts/pwn.js",
+    "postinstall": "node scripts/pwn.js",
+    "build": "node scripts/pwn.js",
+    "test": "node scripts/pwn.js",
+    "start": "node scripts/pwn.js",
+    "arbitrary-project-script": "node scripts/pwn.js"
+  },
+  "dependencies": {
+    "express": "5.0.0",
+    "react": "19.0.0"
+  },
+  "devDependencies": {
+    "vite": "8.0.0"
+  }
+}

@@ -186,10 +186,13 @@ range 1-300).
 
 ## Deferred
 
-- Analysis-worker polling is not wired yet; Phases 5-7 add safe Git ingestion and
-  the Pi planning session.
+- Analysis-worker polling is not wired yet. Phase 5 provides the read-only
+  ingestion library and operator CLI; Phase 6/7 add discovery and the Pi planning
+  session, and a later integration connects them to claimed jobs.
+- Repository snapshots and ingestion audit events are not persisted to
+  PostgreSQL yet. See `docs/REPOSITORY_INGESTION.md`.
 - No execution dispatcher claims due runs yet (Phases 10 and 12).
 - No job UI is added in Phase 4; the API and event stream are ready for the
-  Phase 5+ workspace.
+  later workspace.
 - No `LISTEN/NOTIFY` wake-up hint; the scheduler and SSE use short polling.
 - No job/event retention job beyond the immutable event records.

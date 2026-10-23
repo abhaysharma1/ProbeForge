@@ -1,0 +1,6 @@
+{
+  "name": "example/inert-fixture",
+  "require": {
+    "laravel/framework": "^12.0"
+  }
+}

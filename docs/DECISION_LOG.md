@@ -231,6 +231,26 @@ Format per decision: status, context, decision, rationale, alternatives, impact.
 - **Alternatives:** Claim and immediately release due runs (misleading churn); leave all run logic for Phase 10 (does not satisfy Phase 4); claim and mark running without an executor (fabricated state).
 - **Impact:** Scheduler readiness requires the database. Phase 10/12 wires the dispatcher to `claim_due_run`, heartbeat, completion, and failure.
 
+### D-025 - Phase 5 ingestion is a library and operator CLI, not an HTTP endpoint
+
+- **Date:** 2026-10-23
+- **Status:** Accepted (Phase 5 scope)
+- **Context:** Phase 5 requires safe Git ingestion but does not require an authenticated HTTP ingestion API. Adding an unauthenticated endpoint would bypass the Phase 3/4 authorization model; wiring the worker to the job queue and snapshot tables also needs a dispatcher and claim ownership that Phase 5 does not define.
+- **Decision:** Implement ingestion as a typed analysis-worker library and an operator-only CLI. The worker's HTTP server remains health-only. The library returns an in-memory `RepositorySnapshot` plus a bounded `RepositorySession`; the CLI writes snapshot JSON and append-only JSONL audit events. Database persistence and authenticated ingestion requests are deferred.
+- **Rationale:** Demonstrates the complete read-only pipeline without inventing an authorization boundary or half-wiring a worker/queue contract. Keeps the network attack surface unchanged until a later phase defines authenticated worker polling.
+- **Alternatives:** Unauthenticated `/ingest` endpoint (rejected); worker polling with no dispatcher (fabricates claims); direct DB writes from the CLI (bypasses control-plane policy and tenant checks).
+- **Impact:** Phase 6/7 must define how a claimed job supplies the source and receives the snapshot. Until then, ingestion is a local operator workflow, not a product API.
+
+### D-026 - Git transport policy for Phase 5
+
+- **Date:** 2026-10-23
+- **Status:** Accepted
+- **Context:** Phase 5 must accept supported Git URLs, resolve immutable commits, and protect credentials. The Git CLI can execute hooks, filters, submodule helpers, credential helpers, and remote helpers if its configuration is not constrained.
+- **Decision:** Accept HTTPS (default port only) and SSH (default port only), plus `file:` only in explicit fixture mode. Require allowlisted hosts, reject embedded credentials, resolve DNS before clone and deny private/reserved answers, disable HTTP redirects, and keep TLS verification on. Use an isolated `HOME`, empty global/system config, empty hooks path, no credential helper, no inherited Git/SSH-agent variables, protocol allowlisting, submodule recursion off, LFS smudge downloads off, and `shell: false` argument arrays. HTTP basic credentials are injected as an `http.extraHeader`; SSH credentials are unencrypted private keys written only to the temporary workspace. Reject passphrase-protected keys and do not manage known-hosts files in this phase.
+- **Rationale:** Least privilege and fail-closed behavior are more important than broad transport convenience. The chosen credential forms are testable without a secret manager and never appear in remote URLs or logs.
+- **Alternatives:** Accept arbitrary hosts/schemes (rejected); use the ambient SSH agent (rejected); store plaintext credentials in the URL (rejected); support only public HTTPS (simpler but would not exercise the SSH job contract).
+- **Impact:** SSH deployments must inject an unencrypted key and preconfigure host-key trust outside this phase. DNS rebinding remains a residual risk because the Git CLI resolves again; a later egress policy or address-pinned transport should close it. See `docs/REPOSITORY_INGESTION.md`.
+
 ## Open questions
 
 | ID | Question | Needed by | Notes |

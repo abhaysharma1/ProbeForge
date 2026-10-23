@@ -141,10 +141,13 @@ lease expiry recovery, bounded retries, fencing, and due-run promotion/claiming.
 A failing assertion leaves the temporary schema in place for local inspection.
 Drop it manually or reset the local database after investigating.
 
-## Not in Phase 4
+## Not in Phase 5
 
-- Analysis-worker polling, Git ingestion, repository snapshots, and the Pi
-  planning session (Phases 5-7).
+- Persistence of repository snapshots or ingestion audit events to PostgreSQL,
+  and analysis-worker polling (planned with the queue integration). Phase 5
+  produces bounded snapshot/audit output through the operator CLI and library;
+  it does not write the control-plane tables.
+- The Pi planning session and static discovery (Phases 6-7).
 - Approval workflows, per-member approval grants, and target validation
   (Phases 6-10).
 - Execution dispatch, scanners, load generation, and reporting (Phases 10-13).
