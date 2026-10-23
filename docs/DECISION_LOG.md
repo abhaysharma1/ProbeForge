@@ -211,6 +211,26 @@ Format per decision: status, context, decision, rationale, alternatives, impact.
 - **Alternatives:** Soft delete/archive with a retention workflow (needs its own phase design); cascade exceptions for admin deletion (weakens immutable evidence); no project deletion at all (current).
 - **Impact:** Projects accumulate until an explicit archive/retention design is approved. The frontend has no delete control, and the integration tests do not assert deletion. Revisit before a user-facing project lifecycle feature is required.
 
+### D-023 - Jobs API uses a projectId query parameter and shared queue crate
+
+- **Date:** 2026-10-23
+- **Status:** Accepted
+- **Context:** Phase 4 requires `POST /api/jobs` while Phase 2's `jobCreation` contract is closed (`additionalProperties: false`) and contains no `projectId`. The API and scheduler both need the same claim/fencing logic.
+- **Decision:** Keep the v1 job creation body unchanged and require `?projectId=<uuid>` on `POST /api/jobs`. Validate the body with the shared contract validator (256 KiB cap, unknown/executable fields rejected). Put atomic claims, leases, heartbeats, fencing, retries, recovery, and due-run promotion in a shared `crates/queue` crate used by both the API and scheduler. Use the `Idempotency-Key` header, not a body field.
+- **Rationale:** Avoids a breaking contract change and a second authorization interpretation. One queue implementation prevents API/scheduler drift. A query parameter is explicit and server-validated; it is not trusted for authorization.
+- **Alternatives:** Add `projectId` to the job contract (requires a v2 bundle); use `/api/projects/{id}/jobs` only (does not satisfy the phase path); duplicate SQL in each service (drift and fencing bugs).
+- **Impact:** The web client and any future worker must include the project ID. `docs/JOBS.md` documents the surface. A future v2 contract may move project scope into the body with a versioned migration.
+
+### D-024 - Scheduler promotes due runs but does not dispatch them yet
+
+- **Date:** 2026-10-23
+- **Status:** Accepted (Phase 4 scope)
+- **Context:** Phase 4 requires scheduler claim logic for due run records, but execution adapters and dispatchers are Phases 10 and 12. Claiming a run and never processing it would create fake `running` rows and leases.
+- **Decision:** The scheduler loop atomically promotes due `scheduled` runs to `queued` and recovers expired job leases. `claim_due_run` is implemented and tested for the future execution dispatcher but is not called by the background loop until a dispatcher exists.
+- **Rationale:** Safe, observable progress without pretending execution happened. The same `FOR UPDATE SKIP LOCKED` and lease pattern is already proven by the queue tests.
+- **Alternatives:** Claim and immediately release due runs (misleading churn); leave all run logic for Phase 10 (does not satisfy Phase 4); claim and mark running without an executor (fabricated state).
+- **Impact:** Scheduler readiness requires the database. Phase 10/12 wires the dispatcher to `claim_due_run`, heartbeat, completion, and failure.
+
 ## Open questions
 
 | ID | Question | Needed by | Notes |

@@ -100,6 +100,10 @@ pub enum TestOutcome {
 pub enum EventType {
     #[serde(rename = "job.queued")]
     JobQueued,
+    #[serde(rename = "job.claimed")]
+    JobClaimed,
+    #[serde(rename = "job.retry_scheduled")]
+    JobRetryScheduled,
     #[serde(rename = "job.failed")]
     JobFailed,
     #[serde(rename = "job.cancelled")]

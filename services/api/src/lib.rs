@@ -2,6 +2,7 @@ pub mod audit;
 pub mod auth;
 pub mod cookies;
 pub mod error;
+pub mod jobs;
 pub mod projects;
 
 use std::{fmt, net::SocketAddr, sync::Arc, time::Duration};
@@ -10,14 +11,14 @@ use axum::{
     Json, Router,
     extract::State,
     http::{HeaderValue, StatusCode, header},
-    middleware::{self, map_response},
+    middleware::{self, Next, map_response},
     response::Response,
     routing::{get, post},
 };
 use serde::Serialize;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use thiserror::Error;
-use tower_http::{limit::RequestBodyLimitLayer, timeout::TimeoutLayer, trace::TraceLayer};
+use tower_http::{limit::RequestBodyLimitLayer, trace::TraceLayer};
 use tracing::info;
 use url::Url;
 
@@ -172,19 +173,30 @@ pub fn router(state: AppState) -> Router {
             axum::routing::delete(auth::revoke_session),
         )
         .merge(projects::routes())
+        .merge(jobs::routes())
+        // Authentication runs before CSRF so an anonymous unsafe request gets a
+        // consistent 401 rather than a CSRF 403. Authenticated unsafe requests
+        // still pass through the CSRF guard.
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::csrf_guard,
+        ))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_auth,
         ));
 
-    let api = Router::new()
+    let public = Router::new()
         .route("/auth/csrf", get(auth::csrf))
         .route("/auth/login", post(auth::login))
-        .merge(protected)
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::csrf_guard,
-        ))
+        ));
+
+    let api = Router::new()
+        .merge(public)
+        .merge(protected)
         .layer(map_response(api_no_store));
 
     Router::new()
@@ -192,12 +204,23 @@ pub fn router(state: AppState) -> Router {
         .route("/readyz", get(readiness))
         .nest("/api", api)
         .with_state(state)
-        .layer(TimeoutLayer::with_status_code(
-            StatusCode::REQUEST_TIMEOUT,
-            REQUEST_TIMEOUT,
-        ))
+        .layer(middleware::from_fn(request_timeout))
         .layer(RequestBodyLimitLayer::new(MAX_REQUEST_BODY_BYTES))
         .layer(TraceLayer::new_for_http())
+}
+
+/// Apply the normal request budget, but leave SSE streams open. A fixed
+/// `TimeoutLayer` would terminate every event stream at 30 seconds.
+async fn request_timeout(
+    request: axum::extract::Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    if request.uri().path().ends_with("/events") {
+        return Ok(next.run(request).await);
+    }
+    tokio::time::timeout(REQUEST_TIMEOUT, next.run(request))
+        .await
+        .map_err(|_| StatusCode::REQUEST_TIMEOUT)
 }
 
 /// Authenticated API responses must not be cached by browsers or intermediaries.

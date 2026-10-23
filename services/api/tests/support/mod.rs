@@ -26,6 +26,12 @@ pub struct TestResponse {
     pub body: Value,
 }
 
+pub struct TestRawResponse {
+    pub status: StatusCode,
+    pub headers: HeaderMap,
+    pub body: Vec<u8>,
+}
+
 #[derive(Clone)]
 pub struct Session {
     pub cookie_header: String,
@@ -128,7 +134,27 @@ impl TestApp {
         session: Option<&Session>,
         body: Option<Value>,
     ) -> TestResponse {
-        send_request(&self.router, method, uri, session, body, None).await
+        send_request(&self.router, method, uri, session, body, None, None).await
+    }
+
+    pub async fn send_with_idempotency_key(
+        &self,
+        method: Method,
+        uri: &str,
+        session: Option<&Session>,
+        body: Option<Value>,
+        idempotency_key: &str,
+    ) -> TestResponse {
+        send_request(
+            &self.router,
+            method,
+            uri,
+            session,
+            body,
+            None,
+            Some(("idempotency-key", idempotency_key)),
+        )
+        .await
     }
 
     pub async fn send_with_origin(
@@ -139,7 +165,17 @@ impl TestApp {
         body: Option<Value>,
         origin: &str,
     ) -> TestResponse {
-        send_request(&self.router, method, uri, session, body, Some(origin)).await
+        send_request(&self.router, method, uri, session, body, Some(origin), None).await
+    }
+
+    pub async fn send_raw_with_last_event_id(
+        &self,
+        method: Method,
+        uri: &str,
+        session: Option<&Session>,
+        last_event_id: Option<&str>,
+    ) -> TestRawResponse {
+        send_raw_request(&self.router, method, uri, session, last_event_id).await
     }
 
     pub async fn login(&self, email: &str, password: &str) -> Session {
@@ -174,6 +210,7 @@ impl TestApp {
             Some(&csrf),
             Some(json!({ "email": email, "password": password })),
             None,
+            None,
         )
         .await
     }
@@ -183,6 +220,7 @@ impl TestApp {
             &self.router,
             Method::GET,
             "/api/auth/csrf",
+            None,
             None,
             None,
             None,
@@ -209,6 +247,7 @@ async fn send_request(
     session: Option<&Session>,
     body: Option<Value>,
     origin: Option<&str>,
+    extra_header: Option<(&str, &str)>,
 ) -> TestResponse {
     let mut builder = Request::builder().method(method).uri(uri);
     if let Some(session) = session {
@@ -217,6 +256,9 @@ async fn send_request(
     }
     if let Some(origin) = origin {
         builder = builder.header(header::ORIGIN, origin);
+    }
+    if let Some((name, value)) = extra_header {
+        builder = builder.header(name, value);
     }
     let body = match body {
         Some(value) => {
@@ -238,6 +280,36 @@ async fn send_request(
         serde_json::from_slice(&bytes).unwrap_or(Value::Null)
     };
     TestResponse {
+        status,
+        headers,
+        body,
+    }
+}
+
+async fn send_raw_request(
+    router: &Router,
+    method: Method,
+    uri: &str,
+    session: Option<&Session>,
+    last_event_id: Option<&str>,
+) -> TestRawResponse {
+    let mut builder = Request::builder().method(method).uri(uri);
+    if let Some(session) = session {
+        builder = builder.header(header::COOKIE, &session.cookie_header);
+        builder = builder.header("x-csrf-token", &session.csrf);
+    }
+    if let Some(last_event_id) = last_event_id {
+        builder = builder.header("last-event-id", last_event_id);
+    }
+    let request = builder.body(Body::empty()).expect("request");
+    let response = router.clone().oneshot(request).await.expect("response");
+    let status = response.status();
+    let headers = response.headers().clone();
+    let body = to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("response body")
+        .to_vec();
+    TestRawResponse {
         status,
         headers,
         body,

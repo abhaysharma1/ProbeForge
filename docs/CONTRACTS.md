@@ -40,7 +40,7 @@ the shared fixture manifest is the drift guard between the two validators.
 | `targetAuthorization` | Explicit confirmation, normalized origin/scope, hard limits, validity window |
 | `runRequest` | Approved plan version, selected tests/scenarios, target authorization, idempotency key |
 | `testResult` | Outcome, severity, confidence, bounded evidence metadata |
-| `jobEvent` | Ordered SSE/replay event envelope with an allowed event type |
+| `jobEvent` | Ordered SSE/replay event envelope; includes `job.queued`, `job.claimed`, `job.retry_scheduled`, `job.failed`, and `job.cancelled` |
 
 Enum values are closed. In particular, only the two job goals are accepted; an
 unknown goal fails schema validation and the database check constraint.
@@ -108,9 +108,30 @@ Invalid payloads must be rejected before persistence or execution. Validation
 errors include paths and rule descriptions, not the offending values, so target
 URLs and credential references do not leak through error responses.
 
+## Job API and SSE
+
+`POST /api/jobs?projectId=<uuid>` accepts the unchanged `jobCreation` body and
+returns a job DTO. Project scope is a required query parameter (D-023) so the
+closed v1 body does not change. `Idempotency-Key` is an optional request header;
+an identical retry returns the existing job, while a different payload with the
+same key is rejected with `409`.
+
+`GET /api/jobs/{jobId}/events` emits `text/event-stream`. The SSE `id` is the
+per-job event sequence; `Last-Event-ID` and `?after=` replay events greater than
+the cursor. `?follow=false` returns a finite replay stream for reconnect/tests;
+the default follows until a terminal job state. Event data is the `jobEvent`
+contract shape and PostgreSQL remains authoritative.
+
+Event types added in Phase 4 are `job.claimed` and `job.retry_scheduled`; the
+existing `job.queued`, `job.failed`, and `job.cancelled` remain valid. A shared
+Rust/TypeScript fixture (`event.claimed.valid.json`) verifies the new enum value
+in both validators.
+
 ## Health contract
 
 The Phase 1 liveness/readiness shape remains in `packages/contracts/src/index.ts`
-and is still mirrored in Rust (D-010). Phase 2 adds domain contracts but does not
-change the health endpoints; database-aware readiness is handled with the first
-DB-backed feature (D-018).
+and is still mirrored in Rust (D-010). The API and scheduler now require
+`DATABASE_URL`: their `/readyz` endpoints verify that migrations have been
+recorded and return `503 not_ready` when the database is unavailable or
+unmigrated. The execution worker and analysis worker remain static until their
+own DB-backed phases.

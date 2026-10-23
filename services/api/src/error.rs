@@ -2,10 +2,12 @@ use std::fmt;
 
 use axum::{
     Json,
+    body::Bytes,
     extract::{FromRequest, FromRequestParts, Request, rejection::JsonRejection},
     http::{HeaderValue, StatusCode, header, request::Parts},
     response::{IntoResponse, Response},
 };
+use probeforge_contracts::{Validate, parse_and_validate_json};
 use serde::{Deserialize, de::DeserializeOwned};
 
 /// Stable, non-leaking API error envelope.
@@ -147,6 +149,27 @@ where
 fn json_rejection(rejection: JsonRejection) -> ApiError {
     tracing::debug!(reason = %rejection.body_text(), "request JSON rejected");
     ApiError::invalid("invalid_json", "Request body is not a valid JSON object.")
+}
+
+/// Contract-validated JSON body. Enforces the shared 256 KiB contract limit and
+/// rejects unknown fields and executable fields through the versioned validator.
+pub struct ContractJson<T>(pub T);
+
+impl<T, S> FromRequest<S> for ContractJson<T>
+where
+    T: DeserializeOwned + Validate + Send,
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request(request: Request, state: &S) -> Result<Self, Self::Rejection> {
+        let bytes = Bytes::from_request(request, state)
+            .await
+            .map_err(|_| ApiError::invalid("invalid_body", "Request body could not be read."))?;
+        let value = parse_and_validate_json::<T>(&bytes)
+            .map_err(|error| ApiError::invalid("contract_invalid", error.to_string()))?;
+        Ok(Self(value))
+    }
 }
 
 /// Path extractor that hides framework rejection details.

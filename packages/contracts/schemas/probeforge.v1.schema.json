@@ -708,6 +708,8 @@
           "type": "string",
           "enum": [
             "job.queued",
+            "job.claimed",
+            "job.retry_scheduled",
             "job.failed",
             "job.cancelled",
             "repository.clone.started",

@@ -60,7 +60,8 @@ const SERVICES = [
     name: "scheduler",
     command: binary("probe-forge-scheduler"),
     args: [],
-    health: { url: `http://${schedulerAddr}/healthz`, kind: "json" },
+    // The scheduler now owns a database pool and stale-lease recovery.
+    health: { url: `http://${schedulerAddr}/readyz`, kind: "json", status: "ready" },
   },
   {
     name: "execution-worker",

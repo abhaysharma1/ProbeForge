@@ -11,12 +11,12 @@ The AI agent (Pi) inspects a pinned commit of the user's repository and proposes
 
 ## Status
 
-**Phase 3 — authentication, projects, and authorization: complete.** See the [phase report](docs/phases/03_auth_projects_report.md).
+**Phase 4 — job creation and PostgreSQL queue: complete.** See the [phase report](docs/phases/04_jobs_queue_report.md).
 
-- Next permitted phase: **Phase 4 — job creation and PostgreSQL queue** (starts only after explicit authorization).
+- Next permitted phase: **Phase 5 — read-only Git ingestion** (starts only after explicit authorization).
 - Phase tasks and exit gates: [docs/IMPLEMENTATION_CHECKLIST.md](docs/IMPLEMENTATION_CHECKLIST.md)
 - Decisions, interpretations, and open questions: [docs/DECISION_LOG.md](docs/DECISION_LOG.md)
-- Contract details: [docs/CONTRACTS.md](docs/CONTRACTS.md) · Database details: [docs/DATABASE.md](docs/DATABASE.md) · Authentication and RBAC: [docs/AUTH.md](docs/AUTH.md)
+- Contract details: [docs/CONTRACTS.md](docs/CONTRACTS.md) · Database details: [docs/DATABASE.md](docs/DATABASE.md) · Authentication and RBAC: [docs/AUTH.md](docs/AUTH.md) · Jobs and queue: [docs/JOBS.md](docs/JOBS.md)
 - Phase reports: [docs/phases/](docs/phases/)
 
 ## Architecture at a glance
@@ -48,11 +48,12 @@ Boundaries that must not be crossed:
 
 ```text
 apps/web/                  React 19 + TypeScript + Vite 8 + Tailwind 4 dashboard
-services/api/              Rust + Axum control plane (auth, projects/RBAC, migrations, readiness)
+services/api/              Rust + Axum control plane (auth, projects/RBAC, jobs/SSE, readiness)
 services/analysis-worker/  Bun + TypeScript + Pi SDK worker (health endpoints)
 services/execution-worker/ Rust execution-worker skeleton (health endpoints)
 services/scheduler/        Rust scheduler skeleton (health endpoints)
 crates/contracts/          Rust contract types, validation, and shared-fixture tests
+crates/queue/              Shared PostgreSQL job/run queue, leases, fencing, retries, recovery
 packages/contracts/        JSON Schema, TS contracts, Ajv validators, shared fixtures
 packages/test-catalog/     Versioned, non-executable test catalog scaffold
 migrations/                Forward-only PostgreSQL migrations (0001-0007)
@@ -109,23 +110,23 @@ Stop PostgreSQL with `bun run db:down`.
 | `bun run check:docs` | Required files, doc links, Phase 0-15 coverage, `.env` hygiene, secret patterns |
 | `bun run check:rust` | `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test --workspace` |
 | `bun run check:ts` | Biome lint, strict type checks, Bun/Vitest tests for all TS packages |
-| `bun run check:db` | Migration plus auth/RBAC integration tests against PostgreSQL (requires `DATABASE_URL`) |
+| `bun run check:db` | Migration, auth/RBAC, job API/SSE, and queue lease integration tests (requires `DATABASE_URL`) |
 | `bun run check:services` | Starts all five services, verifies health endpoints, stops them |
 | `bun run build` | Rust workspace build plus the production web build |
 | `bun run format` | Biome format (TS/JSON) and `cargo fmt` |
 
-`check:db` creates random temporary schemas and never touches `public`. It fails if `DATABASE_URL` is missing instead of silently skipping. `check:services` requires a prior `bun run build:rust`, a reachable migrated database, `DATABASE_URL`, and free loopback ports. Neither contacts external targets. CI is not configured yet; the documented local checks are the gate until a Git remote exists (decision D-011).
+`check:db` creates random temporary schemas and never touches `public`. It fails if `DATABASE_URL` is missing instead of silently skipping. `check:services` requires a prior `bun run build:rust`, a reachable migrated database, `DATABASE_URL`, and free loopback ports; the API and scheduler readiness endpoints now verify database state. Neither contacts external targets. CI is not configured yet; the documented local checks are the gate until a Git remote exists (decision D-011).
 
-## Phase 3 scope and current limitations
+## Phase 4 scope and current limitations
 
-- Local email/password authentication uses Argon2id, opaque server-side sessions, and SHA-256 token digests. Accounts are provisioned by an operator; there is no public registration or password reset yet.
-- Sessions use `HttpOnly`, `SameSite=Strict` cookies; state-changing requests require a double-submit CSRF token. Login is rate-limited per account/address and per address. The browser never stores a token in local storage.
-- Project create/read/update, membership roles (owner, admin, collaborator, viewer), role-dependent member management, ownership transfer, and project audit viewing are implemented. All project routes re-check authorization in the database.
-- The API now requires `DATABASE_URL`, owns the first PostgreSQL pool, and reports database-aware readiness. Hard project deletion is deferred because immutable audit/approval/evidence triggers intentionally block destructive cascades (D-022).
-- The web app provides the authenticated project workspace and calls `/api` through the Vite proxy. Viewer and collaborator controls are hidden in the UI, but server-side role checks remain authoritative.
-- Versioned v1 contracts and the Rust contract crate remain in place. Jobs, queue claims, approvals, targets, execution, and reporting are still absent (Phases 4-13).
-- The analysis worker serves health endpoints and pins the Pi SDK; the constrained planning session and tool registry arrive in Phase 7.
-- The test catalog is intentionally empty but has a versioned schema and validation that rejects executable fields; catalog entries arrive in Phase 8.
+- Authenticated `POST /api/jobs?projectId=...` creates queued vulnerability-testing or load-testing jobs from the versioned `jobCreation` contract. Owner, admin, and collaborator roles may create/cancel; viewers are read-only.
+- Git repository URLs use HTTPS/SSH without embedded credentials; a concrete source reference is required, so no unresolvable job is enqueued. `Idempotency-Key` returns the existing job for an identical retry and returns `409` when reused for a different payload.
+- The shared `crates/queue` uses `FOR UPDATE SKIP LOCKED`, commits claims before processing, and enforces worker leases, heartbeats, fencing, bounded exponential retries, and stale-lease recovery.
+- Ordered `job_events` drive SSE. `Last-Event-ID`/`after` replay is implemented, with `follow=false` for a finite replay stream and safe `stream.error` events on database failure.
+- The scheduler owns a PostgreSQL pool, reports database-aware readiness, promotes due scheduled runs to queued, and recovers expired job leases. Due-run claim logic is implemented and tested for the future execution dispatcher.
+- Repository snapshots, plans, approvals, targets, execution, and reports are still absent (Phases 5-13). The analysis worker remains health-only until Phase 5/7.
+- The web app still shows the Phase 3 project workspace; a job creation/status UI is deferred to Phase 5+.
+- Versioned v1 contracts now include `job.claimed` and `job.retry_scheduled` events; catalog tests remain empty but validated.
 - All services bind to loopback by default.
 
 ## Security invariants

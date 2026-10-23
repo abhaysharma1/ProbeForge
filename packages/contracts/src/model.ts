@@ -34,6 +34,8 @@ export type TestOutcome = "passed" | "failed" | "skipped" | "inconclusive" | "er
 
 export type JobEventType =
   | "job.queued"
+  | "job.claimed"
+  | "job.retry_scheduled"
   | "job.failed"
   | "job.cancelled"
   | "repository.clone.started"

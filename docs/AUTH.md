@@ -21,7 +21,9 @@ implementation contract for those controls.
   `X-CSRF-Token` header on every state-changing request. The CSRF token is not an
   authentication credential and is never placed in local storage. The guard also
   rejects `Sec-Fetch-Site: cross-site` and origins outside
-  `PROBE_FORGE_ALLOWED_ORIGINS`.
+  `PROBE_FORGE_ALLOWED_ORIGINS`. Protected routes authenticate before CSRF, so an
+  anonymous unsafe request gets `401`; an authenticated unsafe request without a
+  valid token still gets `403`.
 - **Login rate limits:** Five failed attempts per normalized email plus direct
   peer address in a fifteen-minute window, and fifty attempts per peer address.
   Attempts are stored as SHA-256 key digests; raw emails and IP addresses are not
@@ -48,6 +50,8 @@ implementation contract for those controls.
 | Capability | Owner | Admin | Collaborator | Viewer |
 |---|---:|---:|---:|---:|
 | View project and members | yes | yes | yes | yes |
+| Create and cancel analysis jobs | yes | yes | yes | no |
+| View job status and event stream | yes | yes | yes | yes |
 | Update project name/slug | yes | yes | no | no |
 | Add/change/remove collaborators and viewers | yes | yes | no | no |
 | Add/change/remove admins | yes | no | no | no |
@@ -60,9 +64,9 @@ member and the new owner must already be a project member. The former owner
 becomes an admin; the new owner becomes the owner. Non-members receive `404` for
 project routes so project existence is not disclosed.
 
-Collaborators are intended to create and edit jobs and plans in later phases.
-They do not receive approval authority in Phase 3. Per-member approval grants are
-deferred until the approval workflow is implemented.
+Collaborators can create and cancel analysis jobs in Phase 4, but do not receive
+approval authority. Per-member approval grants are deferred until the approval
+workflow is implemented.
 
 ## API surface
 
@@ -85,6 +89,11 @@ deferred until the approval workflow is implemented.
 | `DELETE` | `/api/projects/{id}/members/{userId}` | owner or admin, role-dependent |
 | `POST` | `/api/projects/{id}/transfer-owner` | owner |
 | `GET` | `/api/projects/{id}/audit` | owner or admin; latest 50 by default |
+| `POST` | `/api/jobs?projectId={id}` | owner, admin, collaborator; contract-validated job creation |
+| `GET` | `/api/jobs/{id}` | any project member |
+| `GET` | `/api/projects/{id}/jobs` | any project member; bounded listing |
+| `POST` | `/api/jobs/{id}/cancel` | owner, admin, collaborator |
+| `GET` | `/api/jobs/{id}/events` | any project member; SSE with replay |
 
 All `/api` state-changing routes pass through the CSRF guard. Every project route
 requiring authentication is layered behind `require_auth`; project handlers also

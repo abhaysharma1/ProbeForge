@@ -74,9 +74,11 @@ contract validators, not a replacement for them.
 - `schedules_due_idx` supports scheduler claims.
 - Project/status/created indexes support bounded project-scoped listings.
 
-Queue claiming itself (atomic `FOR UPDATE SKIP LOCKED`, leases, heartbeats,
-fencing, retries, cancellation) is implemented with the API/worker transactions
-in Phase 4, not in the schema alone.
+Queue claiming itself is implemented in `crates/queue` and used by the API and
+scheduler: atomic `FOR UPDATE SKIP LOCKED` claims, committed-before-work
+transactions, leases, heartbeats, worker-ID fencing, bounded exponential
+retries, stale-lease recovery, cancellation, and due-run promotion. The schema
+constraints above remain the second line of defense.
 
 ## Invariants and immutability
 
@@ -94,6 +96,12 @@ in Phase 4, not in the schema alone.
   updated; approving a revision creates a new plan version. Updating the scope
   or limits of an authorization fails; a revocation timestamp is the only
   permitted update, and authorizations cannot be deleted.
+- Job events are append-only and ordered per job. The API emits
+  `job.queued`, `job.claimed`, `job.retry_scheduled`, `job.failed`,
+  `job.cancelled`, `plan.proposed`, and `run.started`; SSE replay uses the
+  sequence number as the event ID.
+- `jobs.idempotency_key` is unique per project when present. Reusing a key with
+  a different request is rejected by the API before a second row is inserted.
 - `job_events`, `plan_approvals`, `evidence`, and `audit_log` reject updates and
   deletes with triggers. Retention policies must be designed explicitly rather
   than bypassing these triggers.
@@ -120,22 +128,26 @@ in Phase 4, not in the schema alone.
    rejected.
 7. Drops the temporary schema.
 
-`services/api/tests/auth_projects.rs` runs against its own isolated schema for
-each test. It applies all migrations, provisions users, and exercises login,
-logout, session revocation, CSRF/origin rejection, rate limiting, project RBAC,
-cross-project denial, and audit writes. It never scans a target or contacts an
-external host.
+`services/api/tests/auth_projects.rs` and `services/api/tests/jobs_queue.rs`
+run against their own isolated schemas. They apply all migrations and exercise
+login/logout, session revocation, CSRF/origin rejection, rate limiting, project
+RBAC, cross-project denial, audit writes, job creation/idempotency/cancellation,
+event ordering, and SSE replay. They never clone a repository, scan a target, or
+contact an external host.
+
+`crates/queue/tests/queue.rs` uses its own schema to prove concurrent claims,
+lease expiry recovery, bounded retries, fencing, and due-run promotion/claiming.
 
 A failing assertion leaves the temporary schema in place for local inspection.
 Drop it manually or reset the local database after investigating.
 
-## Not in Phase 3
+## Not in Phase 4
 
-- Job creation, atomic queue claiming, SSE, and worker leases (Phase 4).
+- Analysis-worker polling, Git ingestion, repository snapshots, and the Pi
+  planning session (Phases 5-7).
 - Approval workflows, per-member approval grants, and target validation
   (Phases 6-10).
-- Real repository ingestion, scanning, load generation, and reporting
-  (Phases 5-13).
+- Execution dispatch, scanners, load generation, and reporting (Phases 10-13).
 - Hard project deletion/archiving and retention jobs; immutable audit,
   approval, and evidence triggers intentionally block destructive cascades
   (D-022).

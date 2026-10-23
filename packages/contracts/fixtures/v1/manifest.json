@@ -209,6 +209,12 @@
 
     { "name": "job event", "validator": "jobEvent", "path": "event.valid.json", "valid": true },
     {
+      "name": "claimed job event",
+      "validator": "jobEvent",
+      "path": "event.claimed.valid.json",
+      "valid": true
+    },
+    {
       "name": "unknown event type",
       "validator": "jobEvent",
       "path": "event.type.invalid.json",

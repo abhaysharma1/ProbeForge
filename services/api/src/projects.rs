@@ -31,7 +31,7 @@ pub enum ProjectRole {
 }
 
 impl ProjectRole {
-    fn from_db(value: &str) -> Option<Self> {
+    pub(crate) fn from_db(value: &str) -> Option<Self> {
         match value {
             "owner" => Some(Self::Owner),
             "admin" => Some(Self::Admin),
@@ -51,6 +51,12 @@ impl ProjectRole {
 
     fn can_view_audit(self) -> bool {
         matches!(self, Self::Owner | Self::Admin)
+    }
+
+    /// Viewers are read-only. Every other project role may create and cancel
+    /// analysis jobs.
+    pub(crate) fn can_create_jobs(self) -> bool {
+        !matches!(self, Self::Viewer)
     }
 
     /// Owner may manage admins, collaborators, and viewers. Admin may manage
@@ -701,6 +707,30 @@ async fn list_audit(
     ))
 }
 
+pub(crate) async fn load_project_role(
+    pool: &sqlx::PgPool,
+    user_id: Uuid,
+    project_id: Uuid,
+) -> Result<ProjectRole, ApiError> {
+    let role: Option<String> = sqlx::query_scalar(
+        "SELECT role FROM project_members WHERE project_id = $1 AND user_id = $2",
+    )
+    .bind(project_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::database)?;
+
+    let Some(role) = role else {
+        return Err(ApiError::not_found(
+            "project_not_found",
+            "Project not found.",
+        ));
+    };
+    ProjectRole::from_db(&role)
+        .ok_or_else(|| ApiError::internal("unsupported project role in database"))
+}
+
 async fn load_project(
     pool: &sqlx::PgPool,
     user_id: Uuid,
@@ -928,6 +958,10 @@ mod tests {
         assert!(ProjectRole::Admin.can_manage_project());
         assert!(!ProjectRole::Collaborator.can_manage_project());
         assert!(!ProjectRole::Viewer.can_manage_project());
+        assert!(ProjectRole::Owner.can_create_jobs());
+        assert!(ProjectRole::Admin.can_create_jobs());
+        assert!(ProjectRole::Collaborator.can_create_jobs());
+        assert!(!ProjectRole::Viewer.can_create_jobs());
 
         assert!(ProjectRole::Owner.can_manage_member(ProjectRole::Admin));
         assert!(ProjectRole::Owner.can_manage_member(ProjectRole::Viewer));

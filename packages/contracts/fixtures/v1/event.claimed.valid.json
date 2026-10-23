@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "1",
+  "jobId": "33333333-3333-4333-8333-333333333333",
+  "sequence": 2,
+  "type": "job.claimed",
+  "occurredAt": "2026-10-23T10:00:05Z",
+  "payload": {
+    "workerId": "analysis-worker-1",
+    "attempt": 1
+  }
+}

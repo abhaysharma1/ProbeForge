@@ -30,6 +30,7 @@ Do not resolve a genuine conflict silently. Choose the safest minimal interpreta
 | [CONTRACTS.md](CONTRACTS.md) | Versioned API/agent contracts, limits, fixtures, and cross-language validation |
 | [DATABASE.md](DATABASE.md) | Schema map, migration policy, local commands, and database invariants |
 | [AUTH.md](AUTH.md) | Authentication, sessions, CSRF, project roles, API surface, and security limitations |
+| [JOBS.md](JOBS.md) | Job API, queue claims, leases, fencing, retries, events, SSE replay, and scheduler behavior |
 | [phases/](phases/) | One completion report per phase |
 
 ## Phase reports
@@ -40,6 +41,7 @@ Do not resolve a genuine conflict silently. Choose the safest minimal interpreta
 | 1 | [01_monorepo_report.md](phases/01_monorepo_report.md) |
 | 2 | [02_contracts_db_report.md](phases/02_contracts_db_report.md) |
 | 3 | [03_auth_projects_report.md](phases/03_auth_projects_report.md) |
+| 4 | [04_jobs_queue_report.md](phases/04_jobs_queue_report.md) |
 
 `docs/frontend_design.md` is an alias that points to the canonical
 [06_frontend_design.md](06_frontend_design.md), because the agent instructions

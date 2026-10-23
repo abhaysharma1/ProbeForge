@@ -100,28 +100,28 @@ Legend: `[x]` done with evidence - `[ ]` not done.
 
 ## Phase 4 — Job creation and PostgreSQL queue
 
-**Status:** Not started
+**Status:** Complete (see [phase report](phases/04_jobs_queue_report.md))
 
 **Tasks**
 
-- [ ] Implement `POST /api/jobs` for the two supported goals
-- [ ] Validate Git source configuration and required fields
-- [ ] If the source reference is unspecified, require it before queueing or persist a draft; never enqueue unresolvable work
-- [ ] Add idempotency support for job creation where useful
-- [ ] Implement atomic queue claims with `FOR UPDATE SKIP LOCKED`
-- [ ] Implement worker IDs, leases, heartbeat updates, retry counts, bounded backoff, stale-job recovery, and cancellation state
-- [ ] Commit the claim transaction before processing
-- [ ] Guard state updates with lease-owner/fencing checks
-- [ ] Add `job_events` and SSE with reconnect/replay
-- [ ] Implement scheduler claim logic for due run records
+- [x] Implement `POST /api/jobs` for the two supported goals
+- [x] Validate Git source configuration and required fields
+- [x] If the source reference is unspecified, require it before queueing or persist a draft; never enqueue unresolvable work
+- [x] Add idempotency support for job creation where useful
+- [x] Implement atomic queue claims with `FOR UPDATE SKIP LOCKED`
+- [x] Implement worker IDs, leases, heartbeat updates, retry counts, bounded backoff, stale-job recovery, and cancellation state
+- [x] Commit the claim transaction before processing
+- [x] Guard state updates with lease-owner/fencing checks
+- [x] Add `job_events` and SSE with reconnect/replay
+- [x] Implement scheduler claim logic for due run records
 
 **Exit gate**
 
-- [ ] Concurrent worker integration tests show a job is not simultaneously claimed by two live workers
-- [ ] Expired leases can be recovered
-- [ ] A worker cannot complete a job after losing its lease
-- [ ] SSE reconnects can replay events
-- [ ] All tests use local fixtures and do not invoke real scanners
+- [x] Concurrent worker integration tests show a job is not simultaneously claimed by two live workers
+- [x] Expired leases can be recovered
+- [x] A worker cannot complete a job after losing its lease
+- [x] SSE reconnects can replay events
+- [x] All tests use local fixtures and do not invoke real scanners
 
 ## Phase 5 — Read-only Git ingestion
 
