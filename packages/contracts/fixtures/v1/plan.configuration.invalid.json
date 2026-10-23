@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "1",
+  "goal": "vulnerability_testing",
+  "summary": "Review the API for transport configuration weaknesses.",
+  "confidence": 0.5,
+  "plannedTests": [
+    {
+      "catalogTestId": "http.tls.headers",
+      "name": "TLS and security headers",
+      "rationale": "The service terminates HTTPS.",
+      "risk": "low",
+      "expectedEvidence": "Negotiated TLS version and response headers.",
+      "requiresExplicitConfirmation": false,
+      "configuration": []
+    }
+  ],
+  "loadScenarios": [],
+  "requiredInputs": [],
+  "limitations": []
+}

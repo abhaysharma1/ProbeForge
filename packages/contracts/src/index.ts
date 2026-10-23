@@ -1,15 +1,12 @@
 /**
- * Stable shared contracts for the two supported job goals and service health.
- * Phase 2 adds versioned API/event schemas; keep these identifiers stable.
+ * Stable shared contracts for job goals, domain payloads, and service health.
+ * Domain payload schemas live in `schemas/probeforge.v1.schema.json`; runtime
+ * validation lives in the `./validate` entry point so browser bundles do not
+ * pull in the validator.
  */
 
-export const JOB_GOALS = ["vulnerability_testing", "load_testing"] as const;
-
-export type JobGoal = (typeof JOB_GOALS)[number];
-
-export function isJobGoal(value: string): value is JobGoal {
-  return (JOB_GOALS as readonly string[]).includes(value);
-}
+export type * from "./model";
+export { isJobGoal, JOB_GOALS } from "./model";
 
 export const SERVICE_NAMES = [
   "probe-forge-api",

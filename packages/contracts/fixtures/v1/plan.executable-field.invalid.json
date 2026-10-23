@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "1",
+  "goal": "vulnerability_testing",
+  "summary": "Plan with executable configuration",
+  "confidence": 0.5,
+  "plannedTests": [
+    {
+      "catalogTestId": "http.tls.headers",
+      "name": "TLS review",
+      "rationale": "HTTPS is configured.",
+      "risk": "low",
+      "expectedEvidence": "Header snapshot.",
+      "requiresExplicitConfirmation": false,
+      "configuration": {
+        "command": "curl https://example.test"
+      }
+    }
+  ],
+  "loadScenarios": [],
+  "requiredInputs": [],
+  "limitations": []
+}

@@ -1,0 +1,37 @@
+{
+  "schemaVersion": "1",
+  "goal": "load_testing",
+  "summary": "Exercise the public product listing at a modest, bounded rate.",
+  "confidence": 0.64,
+  "plannedTests": [],
+  "loadScenarios": [
+    {
+      "name": "Product listing",
+      "description": "Browse the public product catalogue while measuring latency and error rate.",
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/products",
+          "headers": {
+            "Accept": "application/json"
+          },
+          "expectedStatuses": [200]
+        }
+      ],
+      "profile": {
+        "virtualUsers": 10,
+        "rampUpSeconds": 30,
+        "durationSeconds": 120,
+        "maxRequests": 5000,
+        "maxRequestsPerSecond": 50,
+        "stopConditions": {
+          "errorRate": 0.05,
+          "p95LatencyMs": 1000
+        }
+      }
+    }
+  ],
+  "requiredInputs": ["explicit target authorization"],
+  "limitations": ["The catalogue response shape is assumed from route handlers."],
+  "evidenceReferences": ["src/routes/products.ts"]
+}

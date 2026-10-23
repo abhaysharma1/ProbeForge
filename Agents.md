@@ -1,10 +1,11 @@
 ProbeForge — Agent Engineering Best Practices
 All the documentation files are located in  docs/
-This file defines the working rules for coding agents and human contributors. Follow it alongside the five numbered ProbeForge project documents. If instructions conflict, preserve security and data integrity first, then follow the phase gates in 03_phase_by_phase_implementation_plan.md; document the conflict instead of silently choosing a risky interpretation.
+This file defines the working rules for coding agents and human contributors. Follow it alongside the six numbered ProbeForge project documents. If instructions conflict, preserve security and data integrity first, then follow the phase gates in 03_phase_by_phase_implementation_plan.md; document the conflict instead of silently choosing a risky interpretation.
 
 Implementation tracking: `docs/IMPLEMENTATION_CHECKLIST.md` · Decisions: `docs/DECISION_LOG.md` · Phase reports: `docs/phases/` · Contract check: `bun scripts/check-docs.mjs`
 1. Start with context, then make a small plan
-- Read 01_what_we_are_developing.md through 05_starting_prompt.md before implementation.
+- Read `docs/01_what_we_are_developing.md` through `docs/05_starting_prompt.md` before implementation.
+- For any frontend task, read `docs/frontend_design.md` before planning or editing. Use its palette, typography, spacing, component, motion, responsive, accessibility, and quality-gate requirements throughout the task.
 - Inspect the existing repository before assuming files, frameworks, scripts, or architecture exist.
 - Identify the current phase and its exit criteria. Work only on that phase.
 - Write a concise task plan with affected areas, risks, and verification commands before making broad changes.
@@ -82,13 +83,19 @@ For each change, select checks proportional to its impact:
 - Track queue age, worker heartbeats, retry counts, execution duration, resource usage, request rates, error rates, and cancellation latency.
 - Set explicit timeouts and bounded retries with backoff. Avoid retry storms and unbounded queues.
 - Make failures and inconclusive outcomes visible rather than silently converting them to success.
-10. Frontend and accessibility
+10. Frontend design, behavior, and accessibility
+- Read and follow `docs/frontend_design.md` for all frontend work. It is the required design contract, not optional inspiration.
+- Preserve the specified minimalist, premium technical-editorial direction: warm neutral surfaces, restrained terracotta accent, clear typography, consistent spacing, subtle borders, and purposeful motion.
+- Do not introduce generic AI-site styling such as blue/purple or neon gradients, glowing cards, default glassmorphism, decorative shaders/particles, excessive rounded cards, meaningless charts, or constant motion.
+- Build on the existing frontend architecture and reusable components. Do not replace frameworks or add animation/design dependencies without a demonstrated need.
 - Keep UI state consistent with authoritative server state. Do not represent a job as approved or running based only on optimistic local state.
 - Make target scope, selected tests, load profile, schedule, and expected impact clear before final confirmation.
 - Provide a clear review step before execution and an unmistakable way to cancel active work.
-- Include accessible labels, keyboard navigation, focus states, semantic structure, and readable status indicators that do not rely on color alone.
+- Include accessible labels, keyboard navigation, visible focus states, semantic structure, sufficient contrast, reduced-motion support, and readable status indicators that do not rely on color alone.
 - Design explicit loading, empty, stale, permission-denied, error, partial-result, and reconnect states.
 - Keep charts honest: label units and time windows, distinguish missing data from zero, and show sample size where relevant.
+- Never fabricate metrics, scan progress, activity, or successful operations to make the interface look populated.
+- Before marking frontend work complete, check the relevant visual and interaction quality gates in `docs/frontend_design.md` and report any unmet or unverified checks.
 11. Documentation and changes
 - Update relevant documentation, examples, configuration templates, and API contracts when behavior changes.
 - Keep README and user-facing copy consistent with the name ProbeForge.

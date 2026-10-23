@@ -27,7 +27,11 @@
     "build:rust": "cargo build --workspace",
     "build:web": "bun run --cwd apps/web build",
     "db:up": "docker compose -f infra/local/compose.yaml up -d --wait",
-    "db:down": "docker compose -f infra/local/compose.yaml down"
+    "db:down": "docker compose -f infra/local/compose.yaml down",
+    "db:migrate": "cargo run -p probe-forge-api --bin migrate",
+    "db:test": "bun scripts/db-check.mjs",
+    "check:db": "bun scripts/db-check.mjs",
+    "db:reset": "docker compose -f infra/local/compose.yaml down -v && docker compose -f infra/local/compose.yaml up -d --wait"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.2"

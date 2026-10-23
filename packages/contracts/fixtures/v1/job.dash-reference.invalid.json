@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "1",
+  "goal": "vulnerability_testing",
+  "intensity": "standard",
+  "displayName": "Option-like reference",
+  "git": {
+    "repositoryUrl": "https://github.com/acme/payments.git",
+    "reference": "-c"
+  }
+}

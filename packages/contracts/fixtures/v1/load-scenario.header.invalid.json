@@ -1,0 +1,21 @@
+{
+  "name": "Credential header scenario",
+  "description": "Scenario that tries to place a credential in a header.",
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/api/products",
+      "headers": {
+        "Authorization": "Bearer example"
+      },
+      "expectedStatuses": [200]
+    }
+  ],
+  "profile": {
+    "virtualUsers": 5,
+    "rampUpSeconds": 0,
+    "durationSeconds": 30,
+    "maxRequests": 100,
+    "maxRequestsPerSecond": 10
+  }
+}

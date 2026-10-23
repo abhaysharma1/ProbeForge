@@ -1,6 +1,6 @@
 # ProbeForge decision log
 
-Records implementation decisions not fixed by the five normative documents, plus deferred choices and open questions. The phase plan must not be silently reinterpreted; record the interpretation here.
+Records implementation decisions not fixed by the six normative documents, plus deferred choices and open questions. The phase plan must not be silently reinterpreted; record the interpretation here.
 
 Format per decision: status, context, decision, rationale, alternatives, impact.
 
@@ -122,7 +122,7 @@ Format per decision: status, context, decision, rationale, alternatives, impact.
 - **Context:** Phase 1 adds local PostgreSQL; Phase 2 adds migrations, the pool, and queue indexes.
 - **Decision:** Compose runs PostgreSQL and verifies it with a healthcheck, but no service opens a database connection yet. Readiness stays static.
 - **Rationale:** Avoids a half-built schema and connection code before the migration contract exists.
-- **Impact:** Phase 2 makes readiness depend on the database and is the first phase that can require `DATABASE_URL`.
+- **Impact:** Phase 2 adds migrations and the first database read path. Amended by D-018: Phase 2 adds the migration runner and schema test, while the service pool and database-aware readiness move to Phase 3.
 
 ### D-014 - Test catalog scaffold is empty but validated
 
@@ -150,6 +150,46 @@ Format per decision: status, context, decision, rationale, alternatives, impact.
 - **Decision:** `scripts/check-docs.mjs` uses `git ls-files` and fails only when a real `.env` file is tracked; without Git it falls back to a working-tree check. Local untracked `.env` files are allowed.
 - **Rationale:** Enforces the actual invariant (never committed) while keeping local development workable.
 - **Impact:** The check still fails closed in a non-Git checkout that contains `.env`.
+
+### D-017 - Canonical frontend design document path
+
+- **Date:** 2026-10-23
+- **Status:** Accepted
+- **Context:** The project owner added `docs/06_frontend_design.md` and updated `Agents.md` to require `docs/frontend_design.md` for frontend work. Only the numbered file existed, so the required path was a broken reference.
+- **Decision:** Keep `docs/06_frontend_design.md` as the canonical design contract and add `docs/frontend_design.md` as a short pointer to it. The documentation index lists both.
+- **Rationale:** Preserves the owner-authored document and the numbered-document convention while making the required path valid. Phase 2 makes no UI changes.
+- **Alternatives:** Rename `06_frontend_design.md` (breaks the numbered sequence); duplicate the document (guaranteed drift).
+- **Impact:** Any future frontend task must read the canonical file. Update the pointer, not a second copy, if the location changes.
+
+### D-018 - Database pool and database-aware readiness deferred to Phase 3
+
+- **Date:** 2026-10-23
+- **Status:** Accepted (amends D-013)
+- **Context:** D-013 expected Phase 2 to add a service database pool and DB-dependent readiness. Phase 2's actual scope is contracts, configuration, and migrations; no authenticated DB-backed feature exists yet.
+- **Decision:** Phase 2 adds the SQLx migration runner (`services/api/src/bin/migrate.rs`), migration integration tests, and `DATABASE_URL` configuration. The API, scheduler, and execution worker remain health-only and open no database pool. Phase 3 introduces the first pool, transaction boundaries, and database-aware readiness alongside authentication and project access.
+- **Rationale:** Avoids a half-wired pool and a readiness endpoint that cannot exercise real authorization. Keeps `bun run check:services` independent of a running database while still proving the schema from empty state.
+- **Alternatives:** Add a pool now with static readiness (misleading); make readiness require DB now (breaks the service check without adding a real feature).
+- **Impact:** D-013 remains the target architecture but its Phase 2 timing is superseded. `DATABASE_URL` is required for `db:migrate` and `check:db`, not for service startup.
+
+### D-019 - Contract bundle, validators, and cross-language fixtures
+
+- **Date:** 2026-10-23
+- **Status:** Accepted
+- **Context:** Phase 2 needs shared API/event contracts, plan/load JSON schemas, enum rejection, request limits, and tests. TypeScript and Rust must agree without duplicating behavior by hand.
+- **Decision:** `packages/contracts/schemas/probeforge.v1.schema.json` is the normative JSON Schema (2020-12). TypeScript uses Ajv 8.20.0 validators behind the `@probe-forge/contracts/validate` entry point; Rust uses `crates/contracts` with serde plus semantic validation. Both run the same valid/invalid fixture manifest in `packages/contracts/fixtures/v1/`. The contract cap is 256 KiB per payload. Recursive `safeJson` rejects executable keys case-insensitively. The existing health contract is unchanged.
+- **Rationale:** One schema prevents drift, and shared fixtures fail both suites on disagreement. Keeping Ajv out of the root entry point avoids shipping a validator to the browser. Data-only contracts make arbitrary commands unrepresentable.
+- **Alternatives:** Zod-only (Rust would duplicate rules); JSON Schema-only without semantic checks (goal/content and authorization consistency need code); separate hand-written schemas per language (drift risk).
+- **Impact:** New fields require schema, both type sets, both validators if semantic, and fixture coverage. A breaking change requires a v2 bundle and a DB `schema_version` migration.
+
+### D-020 - Forward-only migrations with schema-isolated tests
+
+- **Date:** 2026-10-23
+- **Status:** Accepted
+- **Context:** Phase 2 defines the core schema and needs a repeatable, non-destructive way to verify it against PostgreSQL.
+- **Decision:** Use SQLx 0.9 runtime migrations in ordered `migrations/0001`-`0006` files. Never edit an applied migration; recover with a backup or a new compensating migration. No down migrations are maintained. The integration test creates a random `pf_test_*` schema, sets `search_path`, applies and re-applies migrations, seeds a full fixture chain, tests constraints/immutability, then drops the schema. It never touches `public`. `PROBE_FORGE_REQUIRE_DB_TESTS=1` turns a missing database into a failure.
+- **Rationale:** Forward-only migrations are simple to audit and avoid unsafe automatic rollbacks. Schema isolation makes destructive tests safe in a shared local database.
+- **Alternatives:** SQLx offline mode (no runtime DB test); a dedicated test database container (more infrastructure); editing migrations in place (unsafe for existing data).
+- **Impact:** Production rollback is restore/forward-fix, not `migrate revert`. The local `db:reset` command is explicitly destructive.
 
 ## Open questions
 

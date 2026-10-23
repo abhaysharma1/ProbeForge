@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "1",
+  "goal": "load_testing",
+  "intensity": "low",
+  "displayName": "Catalogue release load check",
+  "git": {
+    "repositoryUrl": "ssh://git@github.com/acme/storefront.git",
+    "reference": "release/2026.10"
+  }
+}

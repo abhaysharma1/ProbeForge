@@ -1,0 +1,230 @@
+{
+  "schemaVersion": "1",
+  "cases": [
+    {
+      "name": "vulnerability job creation",
+      "validator": "jobCreation",
+      "path": "job.vulnerability.valid.json",
+      "valid": true
+    },
+    {
+      "name": "load job creation",
+      "validator": "jobCreation",
+      "path": "job.load.valid.json",
+      "valid": true
+    },
+    {
+      "name": "unknown job goal",
+      "validator": "jobCreation",
+      "path": "job.unknown-goal.invalid.json",
+      "valid": false
+    },
+    {
+      "name": "credentials embedded in repository URL",
+      "validator": "jobCreation",
+      "path": "job.credentials-in-url.invalid.json",
+      "valid": false
+    },
+    {
+      "name": "unknown job field",
+      "validator": "jobCreation",
+      "path": "job.unknown-field.invalid.json",
+      "valid": false
+    },
+    {
+      "name": "option-like git reference",
+      "validator": "jobCreation",
+      "path": "job.dash-reference.invalid.json",
+      "valid": false
+    },
+
+    {
+      "name": "vulnerability plan",
+      "validator": "plan",
+      "path": "plan.vulnerability.valid.json",
+      "valid": true
+    },
+    { "name": "load plan", "validator": "plan", "path": "plan.load.valid.json", "valid": true },
+    {
+      "name": "executable field in plan configuration",
+      "validator": "plan",
+      "path": "plan.executable-field.invalid.json",
+      "valid": false
+    },
+    {
+      "name": "plan confidence out of range",
+      "validator": "plan",
+      "path": "plan.confidence-range.invalid.json",
+      "valid": false
+    },
+    {
+      "name": "plan configuration is not an object",
+      "validator": "plan",
+      "path": "plan.configuration.invalid.json",
+      "valid": false
+    },
+    {
+      "name": "unknown plan field",
+      "validator": "plan",
+      "path": "plan.unknown-field.invalid.json",
+      "valid": false
+    },
+    {
+      "name": "plan content contradicts goal",
+      "validator": "plan",
+      "path": "plan.wrong-goal-content.invalid.json",
+      "valid": false
+    },
+
+    {
+      "name": "load scenario",
+      "validator": "loadScenario",
+      "path": "load-scenario.valid.json",
+      "valid": true
+    },
+    {
+      "name": "load scenario executable body",
+      "validator": "loadScenario",
+      "path": "load-scenario.script.invalid.json",
+      "valid": false
+    },
+    {
+      "name": "load scenario credential header",
+      "validator": "loadScenario",
+      "path": "load-scenario.header.invalid.json",
+      "valid": false
+    },
+    {
+      "name": "load scenario invalid header name",
+      "validator": "loadScenario",
+      "path": "load-scenario.header-name.invalid.json",
+      "valid": false
+    },
+    {
+      "name": "load scenario invalid header value",
+      "validator": "loadScenario",
+      "path": "load-scenario.header-value.invalid.json",
+      "valid": false
+    },
+
+    {
+      "name": "load profile",
+      "validator": "loadProfile",
+      "path": "load-profile.valid.json",
+      "valid": true
+    },
+    {
+      "name": "load profile with both sizing modes",
+      "validator": "loadProfile",
+      "path": "load-profile.two-modes.invalid.json",
+      "valid": false
+    },
+    {
+      "name": "load profile with zero duration",
+      "validator": "loadProfile",
+      "path": "load-profile.duration.invalid.json",
+      "valid": false
+    },
+    {
+      "name": "load profile stop conditions are not an object",
+      "validator": "loadProfile",
+      "path": "load-profile.stop-conditions.invalid.json",
+      "valid": false
+    },
+
+    {
+      "name": "target authorization",
+      "validator": "targetAuthorization",
+      "path": "authorization.valid.json",
+      "valid": true
+    },
+    {
+      "name": "unconfirmed target authorization",
+      "validator": "targetAuthorization",
+      "path": "authorization.unconfirmed.invalid.json",
+      "valid": false
+    },
+    {
+      "name": "authorization host mismatch",
+      "validator": "targetAuthorization",
+      "path": "authorization.host-mismatch.invalid.json",
+      "valid": false
+    },
+    {
+      "name": "authorization limits out of range",
+      "validator": "targetAuthorization",
+      "path": "authorization.limits.invalid.json",
+      "valid": false
+    },
+
+    {
+      "name": "vulnerability run request",
+      "validator": "runRequest",
+      "path": "run.vulnerability.valid.json",
+      "valid": true
+    },
+    {
+      "name": "load run request",
+      "validator": "runRequest",
+      "path": "run.load.valid.json",
+      "valid": true
+    },
+    {
+      "name": "mixed run request",
+      "validator": "runRequest",
+      "path": "run.mixed.invalid.json",
+      "valid": false
+    },
+    {
+      "name": "invalid run idempotency key",
+      "validator": "runRequest",
+      "path": "run.uuid.invalid.json",
+      "valid": false
+    },
+
+    {
+      "name": "test result",
+      "validator": "testResult",
+      "path": "result.valid.json",
+      "valid": true
+    },
+    {
+      "name": "result confidence out of range",
+      "validator": "testResult",
+      "path": "result.confidence.invalid.json",
+      "valid": false
+    },
+    {
+      "name": "failed result without severity",
+      "validator": "testResult",
+      "path": "result.severity.invalid.json",
+      "valid": false
+    },
+    {
+      "name": "result details are not an object",
+      "validator": "testResult",
+      "path": "result.details.invalid.json",
+      "valid": false
+    },
+
+    { "name": "job event", "validator": "jobEvent", "path": "event.valid.json", "valid": true },
+    {
+      "name": "unknown event type",
+      "validator": "jobEvent",
+      "path": "event.type.invalid.json",
+      "valid": false
+    },
+    {
+      "name": "event sequence below one",
+      "validator": "jobEvent",
+      "path": "event.sequence.invalid.json",
+      "valid": false
+    },
+    {
+      "name": "event payload with executable field",
+      "validator": "jobEvent",
+      "path": "event.payload.invalid.json",
+      "valid": false
+    }
+  ]
+}

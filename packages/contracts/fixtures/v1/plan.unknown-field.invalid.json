@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "1",
+  "goal": "vulnerability_testing",
+  "summary": "Plan with an unknown field",
+  "confidence": 0.5,
+  "plannedTests": [
+    {
+      "catalogTestId": "http.tls.headers",
+      "name": "TLS review",
+      "rationale": "HTTPS is configured.",
+      "risk": "low",
+      "expectedEvidence": "Header snapshot.",
+      "requiresExplicitConfirmation": false
+    }
+  ],
+  "loadScenarios": [],
+  "requiredInputs": [],
+  "limitations": [],
+  "shell": "/bin/sh"
+}

@@ -1,0 +1,127 @@
+# ProbeForge database
+
+PostgreSQL 18.6 is the durable source of truth. Phase 2 introduces the schema,
+migration runner, and schema-isolated migration test. The API, scheduler, and
+execution worker still expose health endpoints only; the first database pool and
+database-aware readiness are wired in Phase 3 (see D-018). The browser never
+connects to PostgreSQL.
+
+## Local commands
+
+```bash
+bun run db:up         # start PostgreSQL 18.6 on 127.0.0.1:5432
+bun run db:migrate    # apply forward-only migrations (reads DATABASE_URL)
+bun run check:db      # run the migration integration test (reads DATABASE_URL)
+bun run db:down       # stop PostgreSQL, keep the volume
+bun run db:reset      # destructive: stop, delete the volume, start empty
+```
+
+Set `DATABASE_URL` from `.env.example`. `POSTGRES_PASSWORD` and the password in
+`DATABASE_URL` must match. Do not commit a real `.env` or a real password.
+
+The migration binary validates only the URL scheme and never logs the connection
+string. The test runner sets `PROBE_FORGE_REQUIRE_DB_TESTS=1`, so a missing
+`DATABASE_URL` fails the check instead of silently skipping database coverage.
+
+## Migration policy
+
+Migrations live in `migrations/` and are applied by
+`cargo run -p probe-forge-api --bin migrate`, which uses SQLx's runtime migrator.
+
+- **Forward-only.** Migrations are ordered (`0001` … `0006` today) and are never
+  edited after being applied. Fix a mistake with a new migration.
+- **Do not use `sqlx migrate revert` in shared or production environments.** No
+  down migrations are maintained. SQLx records applied versions in
+  `_sqlx_migrations`.
+- **Local recovery:** `bun run db:reset` recreates the local database. This is
+  destructive and is intentionally a manual command.
+- **Production recovery:** restore the last verified backup, or ship a reviewed
+  compensating migration. Document the incident and the data impact first.
+- **Reviewability:** migrations must be safe for existing data, state whether
+  they lock or rewrite tables, and explain any destructive operation. No manual
+  production edits.
+- **Deployment:** take a backup before a destructive change, apply migrations as
+  a separate step from starting application replicas, and never run migrations
+  concurrently from multiple deployment jobs.
+
+The Phase 2 migrations create the schema from empty state and only use guarded
+DDL (`CREATE`, `ALTER`, constraints, indexes, and functions). Re-running the
+migrator is idempotent because SQLx skips already-applied versions.
+
+## Schema map
+
+| Migration | Tables | Notes |
+|---|---|---|
+| `0001_identity.sql` | `users`, `projects`, `project_members` | Tenant roots, owner/member roles, case-normalized email, update triggers |
+| `0002_sources_jobs.sql` | `git_sources`, `repository_snapshots`, `jobs`, `job_events` | Repository metadata, job state, queue/lease indexes, ordered append-only events |
+| `0003_plans.sql` | `test_plans`, `planned_tests`, `plan_approvals` | Versioned plans, catalog test references, immutable approval snapshots |
+| `0004_targets.sql` | `targets`, `target_authorizations` | Normalized target origins/scope, immutable authorization scope and limits |
+| `0005_runs.sql` | `load_profiles`, `load_scenarios`, `schedules`, `test_runs`, `test_results`, `evidence`, `run_metrics`, `agent_sessions`, `audit_log` | Bounded load profiles, due schedules, run shape/leases, result/evidence/metric records, append-only audit |
+| `0006_approval_scenarios.sql` | `plan_approvals` | Adds approved load-scenario IDs and allows either test or scenario selections |
+
+Every project-scoped table carries `project_id` and cascades from `projects`
+except where a deliberate restriction preserves approval/authorization history.
+Foreign keys and check constraints are the second line of defense behind the
+contract validators, not a replacement for them.
+
+## Queue, lease, and ordering indexes
+
+- `jobs_queue_idx` and `test_runs_queue_idx` support due-work selection.
+- `jobs_lease_idx` and `test_runs_lease_idx` support stale-lease recovery.
+- `jobs_idempotency_key_key` and `test_runs(project_id, idempotency_key)` reject
+  duplicate creation.
+- `job_events(job_id, sequence)` supports ordered SSE replay.
+- `schedules_due_idx` supports scheduler claims.
+- Project/status/created indexes support bounded project-scoped listings.
+
+Queue claiming itself (atomic `FOR UPDATE SKIP LOCKED`, leases, heartbeats,
+fencing, retries, cancellation) is implemented with the API/worker transactions
+in Phase 4, not in the schema alone.
+
+## Invariants and immutability
+
+- Only `vulnerability_testing` and `load_testing` are legal job goals.
+- `vulnerability_testing` runs require a planned test and no load scenario;
+  `load_testing` runs require a scenario and profile and no planned test.
+- Approved plans and target authorizations preserve their scope. A
+  `plan_approvals` row records the selected tests or scenarios and cannot be
+  updated; approving a revision creates a new plan version. Updating the scope
+  or limits of an authorization fails; a revocation timestamp is the only
+  permitted update, and authorizations cannot be deleted.
+- `job_events`, `plan_approvals`, `evidence`, and `audit_log` reject updates and
+  deletes with triggers. Retention policies must be designed explicitly rather
+  than bypassing these triggers.
+- Secret references use the `secret://` form; credentials are not stored in
+  repository URLs, load headers, logs, or fixtures.
+- JSONB payloads have size ceilings, and the contract's `safeJson` validation
+  rejects executable command/script field names before persistence.
+
+## Migration test
+
+`services/api/tests/migrations.rs` runs only against a real PostgreSQL database:
+
+1. Creates a random schema (`pf_test_<pid>_<nanos>`), never `public`.
+2. Creates a pool whose connections set `search_path` to that schema.
+3. Applies all migrations, then re-applies to prove idempotence.
+4. Asserts every expected table and key index exists.
+5. Seeds a complete fixture chain: user → project → Git source → job → snapshot →
+   plan → planned test → approval → target → authorization → load profile →
+   scenario → schedule → run → result → evidence → event → metric → agent session
+   → audit record.
+6. Asserts unknown goals, duplicate idempotency keys, duplicate event sequences,
+   mutable approvals/events/authorizations, failed results without severity,
+   duplicate result keys, malformed run shapes, and project FK orphans are
+   rejected.
+7. Drops the temporary schema.
+
+A failing assertion leaves the temporary schema in place for local inspection.
+Drop it manually or reset the local database after investigating.
+
+## Not in Phase 2
+
+- Authentication, project membership APIs, and RBAC enforcement (Phase 3).
+- Database pools, transaction boundaries, queue claims, SSE, and worker leases
+  (Phase 4).
+- Real repository ingestion, target validation, scanning, load generation, and
+  reporting (Phases 5-13).
+- Backups, retention jobs, and production operations (later hardening).

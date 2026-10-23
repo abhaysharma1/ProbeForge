@@ -1,0 +1,24 @@
+{
+  "name": "Product listing",
+  "description": "Browse the public catalogue at a bounded rate.",
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/api/products",
+      "headers": {
+        "Accept": "application/json"
+      },
+      "expectedStatuses": [200]
+    }
+  ],
+  "profile": {
+    "virtualUsers": 10,
+    "rampUpSeconds": 30,
+    "durationSeconds": 120,
+    "maxRequests": 5000,
+    "maxRequestsPerSecond": 50,
+    "stopConditions": {
+      "errorRate": 0.05
+    }
+  }
+}

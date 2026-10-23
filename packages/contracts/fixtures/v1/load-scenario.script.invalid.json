@@ -1,0 +1,21 @@
+{
+  "name": "Scripted scenario",
+  "description": "Scenario whose body tries to carry executable content.",
+  "requests": [
+    {
+      "method": "POST",
+      "path": "/api/search",
+      "bodyTemplate": {
+        "script": "alert(1)"
+      },
+      "expectedStatuses": [200]
+    }
+  ],
+  "profile": {
+    "virtualUsers": 5,
+    "rampUpSeconds": 0,
+    "durationSeconds": 30,
+    "maxRequests": 100,
+    "maxRequestsPerSecond": 10
+  }
+}

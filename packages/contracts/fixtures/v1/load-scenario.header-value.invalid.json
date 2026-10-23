@@ -1,0 +1,21 @@
+{
+  "name": "Invalid header value scenario",
+  "description": "Scenario that tries to inject a second header through a CRLF sequence.",
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/api/products",
+      "headers": {
+        "X-Trace": "value\r\nX-Injected: yes"
+      },
+      "expectedStatuses": [200]
+    }
+  ],
+  "profile": {
+    "virtualUsers": 5,
+    "rampUpSeconds": 0,
+    "durationSeconds": 30,
+    "maxRequests": 100,
+    "maxRequestsPerSecond": 10
+  }
+}

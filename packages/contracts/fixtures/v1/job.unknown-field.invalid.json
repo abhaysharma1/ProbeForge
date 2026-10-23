@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "1",
+  "goal": "vulnerability_testing",
+  "intensity": "standard",
+  "displayName": "Unknown field",
+  "git": {
+    "repositoryUrl": "https://github.com/acme/payments.git",
+    "reference": "main"
+  },
+  "command": "curl https://example.test"
+}

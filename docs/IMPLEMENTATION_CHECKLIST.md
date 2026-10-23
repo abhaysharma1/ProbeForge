@@ -55,26 +55,26 @@ Legend: `[x]` done with evidence - `[ ]` not done.
 
 ## Phase 2 — Contracts, configuration, and database migrations
 
-**Status:** Not started
+**Status:** Done - [report](phases/02_contracts_db_report.md)
 
 **Tasks**
 
-- [ ] Define shared API and event contracts
-- [ ] Define schemas for job creation, Git source, intensity, plans, planned tests, target configuration, authorization, test runs, result records, and load profiles
-- [ ] Define allowed enum values and reject unknown goal values
-- [ ] Implement PostgreSQL migrations for the core domain model
-- [ ] Add indexes for queue claiming, leases, project-scoped listings, run schedules, and event ordering
-- [ ] Define a versioned JSON schema for Pi plan output and load scenarios
-- [ ] Add fixture data and migration tests
-- [ ] Add validation for request size, strings, UUIDs, URLs, enums, and numerical limits
+- [x] Define shared API and event contracts
+- [x] Define schemas for job creation, Git source, intensity, plans, planned tests, target configuration, authorization, test runs, result records, and load profiles
+- [x] Define allowed enum values and reject unknown goal values
+- [x] Implement PostgreSQL migrations for the core domain model
+- [x] Add indexes for queue claiming, leases, project-scoped listings, run schedules, and event ordering
+- [x] Define a versioned JSON schema for Pi plan output and load scenarios
+- [x] Add fixture data and migration tests
+- [x] Add validation for request size, strings, UUIDs, URLs, enums, and numerical limits
 
 **Exit gate**
 
-- [ ] Migrations create a complete database from empty state
-- [ ] Rollback strategy is documented
-- [ ] Contract tests pass
-- [ ] Invalid payloads are rejected before persistence
-- [ ] Schemas contain no executable script fields for the model to populate
+- [x] Migrations create a complete database from empty state
+- [x] Rollback strategy is documented
+- [x] Contract tests pass
+- [x] Invalid payloads are rejected before persistence
+- [x] Schemas contain no executable script fields for the model to populate
 
 ## Phase 3 — Authentication, projects, and authorization
 

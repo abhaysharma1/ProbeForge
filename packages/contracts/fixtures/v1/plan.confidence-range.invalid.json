@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "1",
+  "goal": "vulnerability_testing",
+  "summary": "Plan with confidence out of range",
+  "confidence": 1.5,
+  "plannedTests": [
+    {
+      "catalogTestId": "http.tls.headers",
+      "name": "TLS review",
+      "rationale": "HTTPS is configured.",
+      "risk": "low",
+      "expectedEvidence": "Header snapshot.",
+      "requiresExplicitConfirmation": false
+    }
+  ],
+  "loadScenarios": [],
+  "requiredInputs": [],
+  "limitations": []
+}

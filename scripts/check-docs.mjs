@@ -32,6 +32,10 @@ const REQUIRED_FILES = [
   "docs/README.md",
   "docs/IMPLEMENTATION_CHECKLIST.md",
   "docs/DECISION_LOG.md",
+  "docs/CONTRACTS.md",
+  "docs/DATABASE.md",
+  "docs/06_frontend_design.md",
+  "docs/frontend_design.md",
   "docs/01_what_we_are_developing.md",
   "docs/02_broad_plan.md",
   "docs/03_phase_by_phase_implementation_plan.md",
@@ -39,7 +43,20 @@ const REQUIRED_FILES = [
   "docs/05_starting_prompt.md",
   "docs/phases/00_recon_report.md",
   "docs/phases/01_monorepo_report.md",
+  "docs/phases/02_contracts_db_report.md",
   "infra/local/compose.yaml",
+  "crates/contracts/Cargo.toml",
+  "migrations/0001_identity.sql",
+  "migrations/0002_sources_jobs.sql",
+  "migrations/0003_plans.sql",
+  "migrations/0004_targets.sql",
+  "migrations/0005_runs.sql",
+  "migrations/0006_approval_scenarios.sql",
+  "packages/contracts/schemas/probeforge.v1.schema.json",
+  "packages/contracts/fixtures/v1/manifest.json",
+  "services/api/src/bin/migrate.rs",
+  "services/api/tests/migrations.rs",
+  "scripts/db-check.mjs",
   "scripts/services.mjs",
   "apps/web/package.json",
   "services/analysis-worker/package.json",
@@ -47,7 +64,13 @@ const REQUIRED_FILES = [
   "packages/test-catalog/package.json",
 ];
 
-const LINKED_DOCS = ["README.md", "docs/README.md", "docs/IMPLEMENTATION_CHECKLIST.md"];
+const LINKED_DOCS = [
+  "README.md",
+  "docs/README.md",
+  "docs/IMPLEMENTATION_CHECKLIST.md",
+  "docs/CONTRACTS.md",
+  "docs/DATABASE.md",
+];
 
 // High-signal patterns only; generic words like "password" appear in policy prose on purpose.
 const SECRET_PATTERNS = [

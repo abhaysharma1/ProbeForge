@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "1",
+  "jobId": "33333333-3333-4333-8333-333333333333",
+  "sequence": 2,
+  "type": "test.progress",
+  "occurredAt": "2026-10-23T10:01:00Z",
+  "payload": {
+    "command": "curl https://example.test"
+  }
+}

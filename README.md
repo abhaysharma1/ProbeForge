@@ -11,11 +11,12 @@ The AI agent (Pi) inspects a pinned commit of the user's repository and proposes
 
 ## Status
 
-**Phase 1 — monorepo skeleton and local development: complete.** See the [phase report](docs/phases/01_monorepo_report.md).
+**Phase 2 — contracts, configuration, and database migrations: complete.** See the [phase report](docs/phases/02_contracts_db_report.md).
 
-- Next permitted phase: **Phase 2 — contracts, configuration, and database migrations** (starts only after explicit authorization).
+- Next permitted phase: **Phase 3 — authentication, projects, and authorization** (starts only after explicit authorization).
 - Phase tasks and exit gates: [docs/IMPLEMENTATION_CHECKLIST.md](docs/IMPLEMENTATION_CHECKLIST.md)
 - Decisions, interpretations, and open questions: [docs/DECISION_LOG.md](docs/DECISION_LOG.md)
+- Contract details: [docs/CONTRACTS.md](docs/CONTRACTS.md) · Database details: [docs/DATABASE.md](docs/DATABASE.md)
 - Phase reports: [docs/phases/](docs/phases/)
 
 ## Architecture at a glance
@@ -47,15 +48,17 @@ Boundaries that must not be crossed:
 
 ```text
 apps/web/                  React 19 + TypeScript + Vite 8 + Tailwind 4 dashboard
-services/api/              Rust + Axum control plane (health endpoints)
+services/api/              Rust + Axum control plane (health endpoints, migration binary)
 services/analysis-worker/  Bun + TypeScript + Pi SDK worker (health endpoints)
 services/execution-worker/ Rust execution-worker skeleton (health endpoints)
 services/scheduler/        Rust scheduler skeleton (health endpoints)
-packages/contracts/        Shared job-goal, service-name, and health contracts
+crates/contracts/          Rust contract types, validation, and shared-fixture tests
+packages/contracts/        JSON Schema, TS contracts, Ajv validators, shared fixtures
 packages/test-catalog/     Versioned, non-executable test catalog scaffold
+migrations/                Forward-only PostgreSQL migrations (0001-0006)
 infra/local/               Docker Compose for local PostgreSQL
-scripts/                   Repository contract check and local service runner
-docs/                      Normative project documents and phase reports
+scripts/                   Repository contract check, database check, and local service runner
+docs/                      Normative project documents, contracts/database docs, and phase reports
 ```
 
 ## Prerequisites
@@ -77,6 +80,9 @@ bun install                     # install workspace dependencies (lockfile: bun.
 cp .env.example .env            # PowerShell: Copy-Item .env.example .env
 # set POSTGRES_PASSWORD in .env to a local-only value
 bun run db:up                   # start PostgreSQL 18.6 (loopback only)
+# export DATABASE_URL with the same password (see .env.example)
+# PowerShell: $env:DATABASE_URL = "postgres://probeforge:<password>@127.0.0.1:5432/probeforge"
+bun run db:migrate              # apply the Phase 2 schema
 bun run build:rust              # build the Rust workspace
 bun run dev                     # start all five local services
 ```
@@ -102,15 +108,18 @@ Stop PostgreSQL with `bun run db:down`.
 | `bun run check:docs` | Required files, doc links, Phase 0-15 coverage, `.env` hygiene, secret patterns |
 | `bun run check:rust` | `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test --workspace` |
 | `bun run check:ts` | Biome lint, strict type checks, Bun/Vitest tests for all TS packages |
+| `bun run check:db` | Migration integration test against PostgreSQL (requires `DATABASE_URL`) |
 | `bun run check:services` | Starts all five services, verifies health endpoints, stops them |
 | `bun run build` | Rust workspace build plus the production web build |
 | `bun run format` | Biome format (TS/JSON) and `cargo fmt` |
 
-`check:services` requires a prior `bun run build:rust` and free loopback ports. It never contacts external targets. CI is not configured yet; the documented local checks are the gate until a Git remote exists (decision D-011).
+`check:db` creates a random temporary schema and never touches `public`. It fails if `DATABASE_URL` is missing instead of silently skipping. `check:services` requires a prior `bun run build:rust` and free loopback ports. Neither contacts external targets. CI is not configured yet; the documented local checks are the gate until a Git remote exists (decision D-011).
 
-## Phase 1 scope and current limitations
+## Phase 2 scope and current limitations
 
-- The API, scheduler, and execution worker expose health endpoints only. They do not connect to PostgreSQL yet (Phase 2 adds migrations and a pool).
+- Versioned v1 JSON Schema, TypeScript Ajv validators, and a Rust contract crate now cover job creation, plans, load scenarios/profiles, target authorization, run requests, results, and job events. Valid and invalid fixtures run in both languages.
+- PostgreSQL migrations create the core schema from empty state. Migrations are forward-only; no down migrations are maintained.
+- The API, scheduler, and execution worker expose health endpoints only. They do not open a database pool yet. The first pool, transaction boundaries, and DB-aware readiness arrive with Phase 3 (D-018).
 - The analysis worker serves health endpoints and pins the Pi SDK; the constrained planning session and tool registry arrive in Phase 7. No model calls or repository access exist yet.
 - The test catalog is intentionally empty but has a versioned schema and validation that rejects executable fields; catalog entries arrive in Phase 8.
 - No authentication, jobs, approvals, target validation, execution, or reporting exists yet (Phases 3-13).
@@ -128,7 +137,7 @@ Stop PostgreSQL with `bun run db:down`.
 
 ## Contributing
 
-1. Read the five numbered documents in [docs/](docs/) and [Agents.md](Agents.md) before changing anything.
+1. Read the six numbered documents in [docs/](docs/) and [Agents.md](Agents.md) before changing anything.
 2. Work only on the current phase; stop at its exit gate and do not start the next phase until it passes.
 3. Tick checklist items only when the implementation exists and the evidence was actually observed.
 4. Record non-obvious decisions and interpretations in the [decision log](docs/DECISION_LOG.md).

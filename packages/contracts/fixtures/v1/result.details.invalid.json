@@ -1,0 +1,9 @@
+{
+  "schemaVersion": "1",
+  "runId": "88888888-8888-4888-8888-888888888888",
+  "catalogTestId": "http.cors.policy",
+  "outcome": "passed",
+  "summary": "The preflight response rejected an untrusted origin.",
+  "details": [],
+  "durationMs": 120
+}

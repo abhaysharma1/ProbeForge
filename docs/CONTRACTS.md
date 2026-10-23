@@ -1,0 +1,116 @@
+# ProbeForge contracts
+
+Phase 2 defines versioned, data-only contracts for job creation, plans, load
+scenarios/profiles, target authorization, run requests, results, and job events.
+The same fixtures are exercised by the TypeScript and Rust validators.
+
+## Source of truth
+
+| Artifact | Location |
+|---|---|
+| JSON Schema bundle (v1) | `packages/contracts/schemas/probeforge.v1.schema.json` |
+| TypeScript types | `packages/contracts/src/model.ts` |
+| TypeScript validators (Ajv) | `packages/contracts/src/validate.ts` |
+| Rust types + validators | `crates/contracts/` |
+| Shared fixtures + manifest | `packages/contracts/fixtures/v1/` |
+
+The JSON Schema is the normative wire shape. Rust and TypeScript types mirror it;
+the shared fixture manifest is the drift guard between the two validators.
+
+## Versioning
+
+- The bundle is v1 (`schemaVersion: "1"`, filename suffix `.v1`).
+- Every contract carries a literal `schemaVersion`; unknown values are rejected.
+- Additive optional fields may stay in v1. Required-field changes, removals,
+  renames, or semantic changes require a v2 bundle and a database
+  `schema_version` migration. Do not silently change v1.
+- The database stores `schema_version` on plans and load scenarios and rejects
+  anything other than `'1'` today.
+- Unknown properties are rejected (`additionalProperties: false` in JSON Schema,
+  `deny_unknown_fields` in Rust). Clients must send exactly the documented shape.
+
+## Contract families
+
+| Definition | Purpose |
+|---|---|
+| `jobCreation` | Goal (`vulnerability_testing` / `load_testing`), intensity, display name, HTTPS/SSH Git source, optional secret reference |
+| `plan` | Pi output: summary, confidence, planned tests, load scenarios, required inputs, limitations |
+| `plannedTest` | Catalog test ID, rationale, risk, expected evidence, safe configuration |
+| `loadScenario` / `loadProfile` | Structured HTTP requests and bounded VU/arrival-rate profile |
+| `targetAuthorization` | Explicit confirmation, normalized origin/scope, hard limits, validity window |
+| `runRequest` | Approved plan version, selected tests/scenarios, target authorization, idempotency key |
+| `testResult` | Outcome, severity, confidence, bounded evidence metadata |
+| `jobEvent` | Ordered SSE/replay event envelope with an allowed event type |
+
+Enum values are closed. In particular, only the two job goals are accepted; an
+unknown goal fails schema validation and the database check constraint.
+
+## Validation layers
+
+1. **Transport size:** single contract payloads are capped at **256 KiB**
+   (`MAX_CONTRACT_BYTES`). The API's request body middleware is stricter at the
+   HTTP edge (1 MiB); callers must still apply the contract cap before parsing.
+2. **JSON Schema:** Ajv (2020-12) in TypeScript; `serde` plus semantic checks in
+   Rust. Both reject unknown fields, invalid UUIDs, non-URI/unsafe URLs, unknown
+   enums, and out-of-range numbers.
+3. **Semantic checks:** forbidden credential-bearing load headers, HTTP-token
+   header names and control-free values, origin/host and origin/port consistency,
+   goal/content consistency, duplicate IDs, nil UUIDs, timestamp ordering, and
+   executable-content rejection. Structured configuration, stop conditions, and
+   result details must be JSON objects (`safeJsonObject`), not arrays or scalars.
+4. **Database constraints:** second-line defense for enums, ranges, project
+   references, run shape, idempotency keys, and immutable records.
+
+Server-side validation is authoritative. Frontend checks are never a
+substitute for it.
+
+## No executable model output
+
+Model output is data, not code:
+
+- There is no `command`, `script`, `executable`, `shell`, `cmd`, `scripts`, or
+  `entrypoint` field anywhere in the schema.
+- Free-form JSON fields use recursive `safeJson`, which rejects those property
+  names at any depth (case-insensitive in both validators) and caps depth,
+  arrays, object size, and strings.
+- Load requests are structured method/path/header/body data. Credential-bearing
+  headers (`Authorization`, `Cookie`, and related) are rejected; credentials use
+  `secret://` references.
+- Planned tests reference a vetted catalog ID. Configuration is data validated
+  again by the backend; it can never define a command or executable path.
+
+## Adding or changing fixtures
+
+1. Add a JSON fixture under `packages/contracts/fixtures/v1/`.
+2. Add a case to `manifest.json` with `validator`, `path`, and `valid`.
+3. Run `bun test` in `packages/contracts` and
+   `cargo test -p probeforge-contracts`.
+4. A valid case must pass both validators; an invalid case must fail both. If
+   they disagree, fix the schema/types or the validators before proceeding.
+
+## Usage
+
+TypeScript (server-side only):
+
+```ts
+import { validateContractJson, validatePlan } from "@probe-forge/contracts/validate";
+```
+
+Rust:
+
+```rust
+use probeforge_contracts::{Plan, parse_and_validate_json};
+
+let plan: Plan = parse_and_validate_json(raw_bytes)?;
+```
+
+Invalid payloads must be rejected before persistence or execution. Validation
+errors include paths and rule descriptions, not the offending values, so target
+URLs and credential references do not leak through error responses.
+
+## Health contract
+
+The Phase 1 liveness/readiness shape remains in `packages/contracts/src/index.ts`
+and is still mirrored in Rust (D-010). Phase 2 adds domain contracts but does not
+change the health endpoints; database-aware readiness is handled with the first
+DB-backed feature (D-018).

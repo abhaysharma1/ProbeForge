@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "1",
+  "goal": "penetration_testing",
+  "intensity": "standard",
+  "displayName": "Unsupported goal",
+  "git": {
+    "repositoryUrl": "https://github.com/acme/payments.git",
+    "reference": "main"
+  }
+}
