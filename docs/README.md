@@ -34,6 +34,7 @@ Do not resolve a genuine conflict silently. Choose the safest minimal interpreta
 | [REPOSITORY_INGESTION.md](REPOSITORY_INGESTION.md) | Read-only Git URL policy, secret references, workspace isolation, bounds, snapshots, audit events, and CLI |
 | [DISCOVERY.md](DISCOVERY.md) | Static application inventory, supported parsers, provenance, ambiguity, limits, and the bounded Pi discovery toolset |
 | [PLANNING.md](PLANNING.md) | Pi planning, tool registry, plan validation, budgets, fallback, versioning, and persistence |
+| [PLAN_APPROVAL.md](PLAN_APPROVAL.md) | Versioned test catalog, plan review APIs, optimistic selection, immutable approvals, and UI behavior |
 | [phases/](phases/) | One completion report per phase |
 
 ## Phase reports
@@ -48,6 +49,7 @@ Do not resolve a genuine conflict silently. Choose the safest minimal interpreta
 | 5 | [05_git_ingestion_report.md](phases/05_git_ingestion_report.md) |
 | 6 | [06_static_discovery_report.md](phases/06_static_discovery_report.md) |
 | 7 | [07_planning_report.md](phases/07_planning_report.md) |
+| 8 | [08_plan_approval_report.md](phases/08_plan_approval_report.md) |
 
 `docs/frontend_design.md` is an alias that points to the canonical
 [06_frontend_design.md](06_frontend_design.md), because the agent instructions

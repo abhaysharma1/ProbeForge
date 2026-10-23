@@ -59,6 +59,12 @@ impl ProjectRole {
         !matches!(self, Self::Viewer)
     }
 
+    /// Plan selection and approval are write operations. Viewers may review a
+    /// plan but cannot change or approve it.
+    pub(crate) fn can_review_plans(self) -> bool {
+        !matches!(self, Self::Viewer)
+    }
+
     /// Owner may manage admins, collaborators, and viewers. Admin may manage
     /// only collaborators and viewers. The owner role changes only through the
     /// dedicated ownership-transfer operation.

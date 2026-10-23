@@ -153,6 +153,13 @@ export function makeCatalogEntry(overrides: Partial<TestCatalogEntry> = {}): Tes
     name: "Missing security headers",
     category: "http",
     risk: "low",
+    description: "Checks a bounded HTTP response for baseline security headers.",
+    prerequisites: ["Authorized target"],
+    toolRequirements: ["http_probe>=0.1"],
+    targetRequirements: ["authorized target origin"],
+    timeoutSeconds: 30,
+    evidenceExpectations: ["Response headers and observation timestamp"],
+    requiresExplicitConfirmation: false,
     ...overrides,
   };
 }

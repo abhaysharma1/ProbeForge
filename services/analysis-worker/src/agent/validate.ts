@@ -14,6 +14,7 @@ export type PlanValidationCode =
   | "confirmation_required"
   | "unknown_reference"
   | "unsafe_load_path"
+  | "duplicate_load_scenario"
   | "too_many_tests"
   | "too_many_scenarios"
   | "plan_too_large"
@@ -96,7 +97,18 @@ function checkReferences(
 }
 
 function checkLoadPaths(plan: Plan, issues: PlanValidationIssue[]): void {
+  const names = new Set<string>();
   plan.loadScenarios.forEach((scenario, scenarioIndex) => {
+    if (names.has(scenario.name)) {
+      issues.push(
+        issue(
+          "duplicate_load_scenario",
+          `/loadScenarios/${scenarioIndex}/name`,
+          "load scenario names must be unique within a plan",
+        ),
+      );
+    }
+    names.add(scenario.name);
     scenario.requests.forEach((request, requestIndex) => {
       if (request.path.startsWith("//") || request.path.includes("\\")) {
         issues.push(

@@ -272,6 +272,16 @@ Format per decision: status, context, decision, rationale, alternatives, impact.
 - **Alternatives:** Give Pi a direct database writer (rejected: bypasses policy and tenant checks); expose an unauthenticated planning endpoint (rejected: no worker auth contract); add a shell or generic HTTP tool (rejected: prompt injection could reach execution); fail the job on model outage (rejected: loses recoverability and fabricates a terminal state); persist raw model transcripts (rejected: secret and prompt-injection exposure).
 - **Impact:** Phase 8 must add plan read/update/approval APIs and the authenticated worker claim/dispatch path. The vetted catalog is still empty, so a vulnerability fallback is unavailable until catalog entries exist. Load fallback is limited to sorted literal `GET`/`HEAD` routes and a conservative baseline profile. Plans are drafts, never approvals or run authorization. See `docs/PLANNING.md`.
 
+### D-029 - Phase 8 approval edits only selections and records immutable snapshots
+
+- **Date:** 2026-10-23
+- **Status:** Accepted (Phase 8 scope)
+- **Context:** Phase 8 must let users review and select catalog tests, detect concurrent edits, and produce an immutable approval snapshot without creating a run or allowing arbitrary plan edits. The test catalog was only a minimal ID/name/risk scaffold, and the API had no plan review surface.
+- **Decision:** Expand the embedded catalog to schema 1 / catalog version 0.2.0 with description, prerequisites, tool requirements, target requirements, timeout, evidence expectations, and confirmation requirements. Add read/update/approval routes. PATCH changes only `planned_tests.selected` and `load_scenarios.selected` under an optimistic `test_plans.revision` check; it cannot change names, rationale, risk, configuration, or executable strings. Approval requires an explicit confirmation flag, locks the plan and job, snapshots the exact selected rows and catalog metadata, marks the plan approved, supersedes older proposals, and writes an audit event. Report all execution adapters as unavailable until Phase 10. Add `plan_approvals.plan_revision` and a composite run/approval/plan/version foreign key so a run cannot cite an approval for another plan version.
+- **Rationale:** Selection-only edits make arbitrary command injection unrepresentable, while revisioning and row locks provide deterministic conflict handling. The approval snapshot and composite foreign key enforce the no-run-without-approval invariant at the database layer, not only in UI code.
+- **Alternatives:** Allow arbitrary plan field edits (rejected: executable/configuration injection); create a run on approval (rejected: target authorization and execution adapters are later phases); mark every catalog adapter available (rejected: no execution adapters exist yet); rely on UI-only approval checks (rejected: server/database enforcement is required).
+- **Impact:** Phase 9 must add target registration and authorization; Phase 10 must populate the adapter availability allowlist and implement execution. The UI can review seeded or worker-generated plans but cannot create jobs. The catalog remains server-owned and any new entry requires both TS and Rust validation. See `docs/PLAN_APPROVAL.md`.
+
 ## Open questions
 
 | ID | Question | Needed by | Notes |

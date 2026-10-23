@@ -8,13 +8,16 @@ import {
   canManageMembers,
   canViewAudit,
   createProject,
+  type Job,
   listAudit,
+  listJobs,
   listMembers,
   listProjects,
   type Project,
   type ProjectMember,
   type ProjectRole,
 } from "./api";
+import { PlanReview } from "./PlanReview";
 
 interface ProjectsViewProps {
   readonly user: AuthUser;
@@ -42,6 +45,24 @@ const ACTION_LABELS: Record<string, string> = {
   "project.member_role_changed": "Changed member role",
   "project.member_removed": "Removed member",
   "project.owner_transferred": "Transferred ownership",
+  "plan.selection_updated": "Updated plan selection",
+  "plan.approved": "Approved plan",
+};
+
+const JOB_GOAL_LABELS: Record<Job["goal"], string> = {
+  vulnerability_testing: "Vulnerability testing",
+  load_testing: "Load testing",
+};
+
+const JOB_STATUS_LABELS: Record<Job["status"], string> = {
+  draft: "Draft",
+  queued: "Queued",
+  analyzing: "Analyzing",
+  planning: "Planning",
+  awaiting_approval: "Awaiting approval",
+  failed: "Failed",
+  cancelled: "Cancelled",
+  expired: "Expired",
 };
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
@@ -83,6 +104,11 @@ export function ProjectsView({ user, csrfToken, onSignOut, onSessionExpired }: P
   const [audit, setAudit] = useState<AuditEvent[] | null>(null);
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditError, setAuditError] = useState<string | null>(null);
+
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [jobsLoading, setJobsLoading] = useState(false);
+  const [jobsError, setJobsError] = useState<string | null>(null);
+  const [selectedJob, setSelectedJob] = useState<Job | null>(null);
 
   const [memberEmail, setMemberEmail] = useState("");
   const [memberRole, setMemberRole] = useState<ProjectRole>("viewer");
@@ -153,6 +179,28 @@ export function ProjectsView({ user, csrfToken, onSignOut, onSessionExpired }: P
       } finally {
         if (generation === detailGeneration.current) {
           setMembersLoading(false);
+        }
+      }
+
+      setJobsLoading(true);
+      setJobsError(null);
+      try {
+        const next = await listJobs(projectId);
+        if (generation === detailGeneration.current) {
+          setJobs(next);
+        }
+      } catch (error) {
+        if (generation !== detailGeneration.current) {
+          return;
+        }
+        const message = handleError(error);
+        if (!message) {
+          return;
+        }
+        setJobsError(message);
+      } finally {
+        if (generation === detailGeneration.current) {
+          setJobsLoading(false);
         }
       }
 
@@ -227,6 +275,7 @@ export function ProjectsView({ user, csrfToken, onSignOut, onSessionExpired }: P
   }, [onSessionExpired]);
 
   useEffect(() => {
+    setSelectedJob(null);
     if (!selectedProjectId || !selectedRole) {
       detailGeneration.current += 1;
       setMembers([]);
@@ -235,6 +284,9 @@ export function ProjectsView({ user, csrfToken, onSignOut, onSessionExpired }: P
       setAudit(null);
       setAuditLoading(false);
       setAuditError(null);
+      setJobs([]);
+      setJobsLoading(false);
+      setJobsError(null);
       return;
     }
     void loadDetails(selectedProjectId, selectedRole);
@@ -371,11 +423,12 @@ export function ProjectsView({ user, csrfToken, onSignOut, onSessionExpired }: P
                   WORKSPACE
                 </p>
                 <h1 className="mt-1 text-[28px] font-semibold leading-tight tracking-[-0.025em]">
-                  Projects
+                  {selectedJob ? "Plan review" : "Projects"}
                 </h1>
                 <p className="mt-1.5 max-w-xl text-[13px] text-pf-text-secondary">
-                  Each project holds repository analysis, proposed plans, approvals, and evidence
-                  for one codebase or deployed application.
+                  {selectedJob
+                    ? "Review the proposed tests, prerequisites, risks, and configuration before recording an immutable approval."
+                    : "Each project holds repository analysis, proposed plans, approvals, and evidence for one codebase or deployed application."}
                 </p>
               </div>
 
@@ -397,378 +450,464 @@ export function ProjectsView({ user, csrfToken, onSignOut, onSessionExpired }: P
           </header>
 
           <div className="px-6 py-7 lg:px-9 lg:py-8">
-            <section className="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(350px,0.8fr)] xl:items-start">
-              <div className="min-w-0">
-                <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-                  <div>
-                    <h2 className="text-[18px] font-semibold tracking-[-0.01em]">Your projects</h2>
-                    <p className="mt-1 text-[12px] text-pf-text-secondary">
-                      {projects.length === 0
-                        ? "No projects yet."
-                        : `${projects.length} ${projects.length === 1 ? "project" : "projects"} you can access.`}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowCreate((current) => !current);
-                      setCreateError(null);
-                    }}
-                    className="inline-flex h-9 items-center rounded-md bg-pf-accent px-3.5 text-[12px] font-medium text-white transition-colors hover:bg-pf-accent-hover"
-                  >
-                    {showCreate ? "Cancel" : "New project"}
-                  </button>
-                </div>
-
-                {showCreate ? (
-                  <form
-                    onSubmit={handleCreate}
-                    aria-label="Create project"
-                    className="mb-4 rounded-lg border border-pf-border bg-pf-surface p-4"
-                  >
-                    <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,0.7fr)]">
-                      <div>
-                        <label
-                          htmlFor="project-name"
-                          className="mb-1.5 block text-[12px] font-medium"
-                        >
-                          Name
-                        </label>
-                        <input
-                          id="project-name"
-                          value={name}
-                          onChange={(event) => setName(event.target.value)}
-                          required
-                          maxLength={120}
-                          placeholder="Payments API"
-                          className="h-9 w-full rounded-md border border-pf-border-strong bg-pf-surface px-3 text-[13px] transition-colors placeholder:text-pf-text-muted hover:border-pf-text-muted focus:border-pf-accent focus:outline-none"
-                        />
-                      </div>
-                      <div>
-                        <label
-                          htmlFor="project-slug"
-                          className="mb-1.5 block text-[12px] font-medium"
-                        >
-                          Slug <span className="font-normal text-pf-text-muted">optional</span>
-                        </label>
-                        <input
-                          id="project-slug"
-                          value={slug}
-                          onChange={(event) => setSlug(event.target.value)}
-                          pattern="[a-z0-9][a-z0-9-]{1,62}"
-                          placeholder="payments-api"
-                          className="h-9 w-full rounded-md border border-pf-border-strong bg-pf-surface px-3 font-mono text-[12px] transition-colors placeholder:text-pf-text-muted hover:border-pf-text-muted focus:border-pf-accent focus:outline-none"
-                        />
-                      </div>
-                    </div>
-                    <p className="mt-2 text-[11px] text-pf-text-muted">
-                      The slug is a stable identifier. Leave it blank to derive one from the name.
-                    </p>
-                    {createError ? (
-                      <p role="alert" className="mt-3 text-[12px] text-pf-error">
-                        {createError}
+            {selectedJob ? (
+              <PlanReview
+                job={selectedJob}
+                canEdit={selectedRole !== null && selectedRole !== "viewer"}
+                csrfToken={csrfToken}
+                onBack={() => setSelectedJob(null)}
+                onSessionExpired={onSessionExpired}
+              />
+            ) : (
+              <section className="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(350px,0.8fr)] xl:items-start">
+                <div className="min-w-0">
+                  <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+                    <div>
+                      <h2 className="text-[18px] font-semibold tracking-[-0.01em]">
+                        Your projects
+                      </h2>
+                      <p className="mt-1 text-[12px] text-pf-text-secondary">
+                        {projects.length === 0
+                          ? "No projects yet."
+                          : `${projects.length} ${projects.length === 1 ? "project" : "projects"} you can access.`}
                       </p>
-                    ) : null}
-                    <div className="mt-4 flex items-center gap-2">
-                      <button
-                        type="submit"
-                        disabled={creating || name.trim() === ""}
-                        className="h-9 rounded-md bg-pf-accent px-3.5 text-[12px] font-medium text-white transition-colors hover:bg-pf-accent-hover disabled:opacity-55"
-                      >
-                        {creating ? "Creating..." : "Create project"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setShowCreate(false)}
-                        className="h-9 rounded-md px-3 text-[12px] font-medium text-pf-text-secondary transition-colors hover:bg-pf-surface-hover hover:text-pf-text"
-                      >
-                        Cancel
-                      </button>
                     </div>
-                  </form>
-                ) : null}
-
-                {loading ? (
-                  <div
-                    role="status"
-                    className="rounded-lg border border-pf-border bg-pf-surface px-4 py-10 text-center text-[13px] text-pf-text-secondary"
-                  >
-                    Loading projects...
-                  </div>
-                ) : loadError ? (
-                  <div className="rounded-lg border border-[#e8c9c4] bg-[#fbf1ef] px-4 py-5">
-                    <p role="alert" className="text-[13px] text-pf-error">
-                      {loadError}
-                    </p>
                     <button
                       type="button"
                       onClick={() => {
-                        setLoading(true);
-                        void refreshProjects().finally(() => setLoading(false));
+                        setShowCreate((current) => !current);
+                        setCreateError(null);
                       }}
-                      className="mt-3 h-8 rounded-md border border-pf-border-strong bg-pf-surface px-3 text-[12px] font-medium transition-colors hover:border-pf-text-muted"
+                      className="inline-flex h-9 items-center rounded-md bg-pf-accent px-3.5 text-[12px] font-medium text-white transition-colors hover:bg-pf-accent-hover"
                     >
-                      Retry
+                      {showCreate ? "Cancel" : "New project"}
                     </button>
                   </div>
-                ) : projects.length === 0 ? (
-                  <div className="rounded-lg border border-dashed border-pf-border-strong bg-pf-surface px-6 py-12 text-center">
-                    <h3 className="text-[15px] font-semibold">Create your first project</h3>
-                    <p className="mx-auto mt-1.5 max-w-sm text-[12px] leading-5 text-pf-text-secondary">
-                      A project groups the repository, plans, approvals, targets, and evidence for
-                      one application.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => setShowCreate(true)}
-                      className="mt-4 h-9 rounded-md bg-pf-accent px-3.5 text-[12px] font-medium text-white transition-colors hover:bg-pf-accent-hover"
+
+                  {showCreate ? (
+                    <form
+                      onSubmit={handleCreate}
+                      aria-label="Create project"
+                      className="mb-4 rounded-lg border border-pf-border bg-pf-surface p-4"
                     >
-                      New project
-                    </button>
-                  </div>
-                ) : (
-                  <ul className="overflow-hidden rounded-lg border border-pf-border bg-pf-surface">
-                    {projects.map((project) => {
-                      const active = project.id === selectedId;
-                      return (
-                        <li key={project.id} className="border-b border-pf-border last:border-b-0">
-                          <button
-                            type="button"
-                            aria-pressed={active}
-                            onClick={() => setSelectedId(project.id)}
-                            className={`flex w-full flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3.5 text-left transition-colors ${
-                              active ? "bg-pf-accent-soft/65" : "hover:bg-pf-surface-hover"
-                            }`}
+                      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,0.7fr)]">
+                        <div>
+                          <label
+                            htmlFor="project-name"
+                            className="mb-1.5 block text-[12px] font-medium"
                           >
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-[13px] font-medium">
-                                {project.name}
-                              </span>
-                              <span className="mt-0.5 block truncate font-mono text-[11px] text-pf-text-muted">
-                                {project.slug}
-                              </span>
-                            </span>
-                            <span className="inline-flex items-center rounded-full border border-pf-border bg-pf-surface px-2 py-0.5 text-[11px] font-medium text-pf-text-secondary">
-                              {ROLE_LABELS[project.role]}
-                            </span>
-                            <span className="w-20 text-right text-[11px] text-pf-text-muted">
-                              {project.memberCount}{" "}
-                              {project.memberCount === 1 ? "member" : "members"}
-                            </span>
-                            <span className="hidden w-24 text-right text-[11px] text-pf-text-muted sm:block">
-                              {formatDate(project.createdAt)}
-                            </span>
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-              </div>
-
-              <div id="project-detail" className="min-w-0 xl:sticky xl:top-8">
-                {!selected ? (
-                  <div className="rounded-lg border border-pf-border bg-pf-surface px-5 py-10 text-center">
-                    <p className="text-[13px] font-medium">Select a project</p>
-                    <p className="mx-auto mt-1.5 max-w-[240px] text-[12px] leading-5 text-pf-text-secondary">
-                      Choose a project to review its members and recent security audit events.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="rounded-lg border border-pf-border bg-pf-surface">
-                    <div className="border-b border-pf-border px-5 py-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <h2 className="truncate text-[18px] font-semibold tracking-[-0.015em]">
-                            {selected.name}
-                          </h2>
-                          <p className="mt-0.5 truncate font-mono text-[11px] text-pf-text-muted">
-                            {selected.slug}
-                          </p>
+                            Name
+                          </label>
+                          <input
+                            id="project-name"
+                            value={name}
+                            onChange={(event) => setName(event.target.value)}
+                            required
+                            maxLength={120}
+                            placeholder="Payments API"
+                            className="h-9 w-full rounded-md border border-pf-border-strong bg-pf-surface px-3 text-[13px] transition-colors placeholder:text-pf-text-muted hover:border-pf-text-muted focus:border-pf-accent focus:outline-none"
+                          />
                         </div>
-                        <span className="shrink-0 rounded-full border border-pf-border bg-pf-surface-muted px-2 py-0.5 text-[11px] font-medium text-pf-text-secondary">
-                          {ROLE_LABELS[selected.role]}
-                        </span>
+                        <div>
+                          <label
+                            htmlFor="project-slug"
+                            className="mb-1.5 block text-[12px] font-medium"
+                          >
+                            Slug <span className="font-normal text-pf-text-muted">optional</span>
+                          </label>
+                          <input
+                            id="project-slug"
+                            value={slug}
+                            onChange={(event) => setSlug(event.target.value)}
+                            pattern="[a-z0-9][a-z0-9-]{1,62}"
+                            placeholder="payments-api"
+                            className="h-9 w-full rounded-md border border-pf-border-strong bg-pf-surface px-3 font-mono text-[12px] transition-colors placeholder:text-pf-text-muted hover:border-pf-text-muted focus:border-pf-accent focus:outline-none"
+                          />
+                        </div>
                       </div>
-                      <dl className="mt-4 grid grid-cols-3 gap-3 border-t border-pf-border pt-3">
-                        <div>
-                          <dt className="text-[10px] font-medium text-pf-text-muted">Your role</dt>
-                          <dd className="mt-0.5 text-[12px]">{ROLE_LABELS[selected.role]}</dd>
-                        </div>
-                        <div>
-                          <dt className="text-[10px] font-medium text-pf-text-muted">Members</dt>
-                          <dd className="mt-0.5 text-[12px]">{selected.memberCount}</dd>
-                        </div>
-                        <div>
-                          <dt className="text-[10px] font-medium text-pf-text-muted">Created</dt>
-                          <dd className="mt-0.5 text-[12px]">{formatDate(selected.createdAt)}</dd>
-                        </div>
-                      </dl>
-                    </div>
-
-                    <section
-                      className="border-b border-pf-border px-5 py-4"
-                      aria-labelledby="members-heading"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <h3 id="members-heading" className="text-[13px] font-semibold">
-                          Members
-                        </h3>
-                        <span className="text-[11px] text-pf-text-muted">
-                          {members.length} {members.length === 1 ? "person" : "people"}
-                        </span>
-                      </div>
-
-                      {membersLoading ? (
-                        <p role="status" className="mt-3 text-[12px] text-pf-text-secondary">
-                          Loading members...
-                        </p>
-                      ) : membersError ? (
+                      <p className="mt-2 text-[11px] text-pf-text-muted">
+                        The slug is a stable identifier. Leave it blank to derive one from the name.
+                      </p>
+                      {createError ? (
                         <p role="alert" className="mt-3 text-[12px] text-pf-error">
-                          {membersError}
+                          {createError}
                         </p>
-                      ) : (
-                        <ul className="mt-3 divide-y divide-pf-border">
-                          {members.map((member) => (
-                            <li
-                              key={member.userId}
-                              className="flex items-center justify-between gap-3 py-2.5"
-                            >
-                              <div className="min-w-0">
-                                <p className="truncate text-[12px] font-medium">
-                                  {member.displayName}
-                                </p>
-                                <p className="truncate text-[11px] text-pf-text-muted">
-                                  {member.email}
-                                </p>
-                              </div>
-                              <span className="shrink-0 text-[11px] text-pf-text-secondary">
-                                {ROLE_LABELS[member.role]}
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-
-                      {memberManagement && roles.length > 0 ? (
-                        <form
-                          onSubmit={handleAddMember}
-                          aria-label="Add project member"
-                          className="mt-4 border-t border-pf-border pt-4"
+                      ) : null}
+                      <div className="mt-4 flex items-center gap-2">
+                        <button
+                          type="submit"
+                          disabled={creating || name.trim() === ""}
+                          className="h-9 rounded-md bg-pf-accent px-3.5 text-[12px] font-medium text-white transition-colors hover:bg-pf-accent-hover disabled:opacity-55"
                         >
-                          <p className="text-[11px] font-medium text-pf-text-secondary">
-                            Add an existing account
-                          </p>
-                          <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_112px]">
-                            <label className="sr-only" htmlFor="member-email">
-                              Member email
-                            </label>
-                            <input
-                              id="member-email"
-                              type="email"
-                              required
-                              value={memberEmail}
-                              onChange={(event) => setMemberEmail(event.target.value)}
-                              placeholder="person@example.com"
-                              className="h-9 min-w-0 rounded-md border border-pf-border-strong bg-pf-surface px-3 text-[12px] transition-colors placeholder:text-pf-text-muted hover:border-pf-text-muted focus:border-pf-accent focus:outline-none"
-                            />
-                            <label className="sr-only" htmlFor="member-role">
-                              Member role
-                            </label>
-                            <select
-                              id="member-role"
-                              value={effectiveMemberRole}
-                              onChange={(event) => setMemberRole(event.target.value as ProjectRole)}
-                              className="h-9 rounded-md border border-pf-border-strong bg-pf-surface px-2 text-[12px] focus:border-pf-accent focus:outline-none"
-                            >
-                              {roles.map((role) => (
-                                <option key={role} value={role}>
-                                  {ROLE_LABELS[role]}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                          <button
-                            type="submit"
-                            disabled={addingMember || memberEmail.trim() === ""}
-                            className="mt-2 h-8 rounded-md border border-pf-border-strong bg-pf-surface px-3 text-[11px] font-medium transition-colors hover:border-pf-text-muted disabled:opacity-55"
-                          >
-                            {addingMember ? "Adding..." : "Add member"}
-                          </button>
-                          {memberError ? (
-                            <p role="alert" className="mt-2 text-[11px] text-pf-error">
-                              {memberError}
-                            </p>
-                          ) : null}
-                          {memberNotice ? (
-                            <p role="status" className="mt-2 text-[11px] leading-4 text-pf-success">
-                              {memberNotice}
-                            </p>
-                          ) : null}
-                        </form>
-                      ) : (
-                        <p className="mt-3 border-t border-pf-border pt-3 text-[11px] leading-4 text-pf-text-muted">
-                          {selected.role === "viewer"
-                            ? "Viewers can read project data. Member management is restricted."
-                            : "Collaborators can work with project content. Member management is restricted."}
-                        </p>
-                      )}
-                    </section>
+                          {creating ? "Creating..." : "Create project"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShowCreate(false)}
+                          className="h-9 rounded-md px-3 text-[12px] font-medium text-pf-text-secondary transition-colors hover:bg-pf-surface-hover hover:text-pf-text"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </form>
+                  ) : null}
 
-                    {canViewAudit(selected.role) ? (
-                      <section className="px-5 py-4" aria-labelledby="audit-heading">
-                        <div className="flex items-center justify-between gap-3">
-                          <h3 id="audit-heading" className="text-[13px] font-semibold">
-                            Audit trail
-                          </h3>
-                          <span className="text-[11px] text-pf-text-muted">Latest 50</span>
+                  {loading ? (
+                    <div
+                      role="status"
+                      className="rounded-lg border border-pf-border bg-pf-surface px-4 py-10 text-center text-[13px] text-pf-text-secondary"
+                    >
+                      Loading projects...
+                    </div>
+                  ) : loadError ? (
+                    <div className="rounded-lg border border-[#e8c9c4] bg-[#fbf1ef] px-4 py-5">
+                      <p role="alert" className="text-[13px] text-pf-error">
+                        {loadError}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLoading(true);
+                          void refreshProjects().finally(() => setLoading(false));
+                        }}
+                        className="mt-3 h-8 rounded-md border border-pf-border-strong bg-pf-surface px-3 text-[12px] font-medium transition-colors hover:border-pf-text-muted"
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  ) : projects.length === 0 ? (
+                    <div className="rounded-lg border border-dashed border-pf-border-strong bg-pf-surface px-6 py-12 text-center">
+                      <h3 className="text-[15px] font-semibold">Create your first project</h3>
+                      <p className="mx-auto mt-1.5 max-w-sm text-[12px] leading-5 text-pf-text-secondary">
+                        A project groups the repository, plans, approvals, targets, and evidence for
+                        one application.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setShowCreate(true)}
+                        className="mt-4 h-9 rounded-md bg-pf-accent px-3.5 text-[12px] font-medium text-white transition-colors hover:bg-pf-accent-hover"
+                      >
+                        New project
+                      </button>
+                    </div>
+                  ) : (
+                    <ul className="overflow-hidden rounded-lg border border-pf-border bg-pf-surface">
+                      {projects.map((project) => {
+                        const active = project.id === selectedId;
+                        return (
+                          <li
+                            key={project.id}
+                            className="border-b border-pf-border last:border-b-0"
+                          >
+                            <button
+                              type="button"
+                              aria-pressed={active}
+                              onClick={() => {
+                                setSelectedId(project.id);
+                                setSelectedJob(null);
+                              }}
+                              className={`flex w-full flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3.5 text-left transition-colors ${
+                                active ? "bg-pf-accent-soft/65" : "hover:bg-pf-surface-hover"
+                              }`}
+                            >
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-[13px] font-medium">
+                                  {project.name}
+                                </span>
+                                <span className="mt-0.5 block truncate font-mono text-[11px] text-pf-text-muted">
+                                  {project.slug}
+                                </span>
+                              </span>
+                              <span className="inline-flex items-center rounded-full border border-pf-border bg-pf-surface px-2 py-0.5 text-[11px] font-medium text-pf-text-secondary">
+                                {ROLE_LABELS[project.role]}
+                              </span>
+                              <span className="w-20 text-right text-[11px] text-pf-text-muted">
+                                {project.memberCount}{" "}
+                                {project.memberCount === 1 ? "member" : "members"}
+                              </span>
+                              <span className="hidden w-24 text-right text-[11px] text-pf-text-muted sm:block">
+                                {formatDate(project.createdAt)}
+                              </span>
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
+
+                <div id="project-detail" className="min-w-0 xl:sticky xl:top-8">
+                  {!selected ? (
+                    <div className="rounded-lg border border-pf-border bg-pf-surface px-5 py-10 text-center">
+                      <p className="text-[13px] font-medium">Select a project</p>
+                      <p className="mx-auto mt-1.5 max-w-[240px] text-[12px] leading-5 text-pf-text-secondary">
+                        Choose a project to review its members and recent security audit events.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-pf-border bg-pf-surface">
+                      <div className="border-b border-pf-border px-5 py-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <h2 className="truncate text-[18px] font-semibold tracking-[-0.015em]">
+                              {selected.name}
+                            </h2>
+                            <p className="mt-0.5 truncate font-mono text-[11px] text-pf-text-muted">
+                              {selected.slug}
+                            </p>
+                          </div>
+                          <span className="shrink-0 rounded-full border border-pf-border bg-pf-surface-muted px-2 py-0.5 text-[11px] font-medium text-pf-text-secondary">
+                            {ROLE_LABELS[selected.role]}
+                          </span>
                         </div>
-                        {auditLoading ? (
+                        <dl className="mt-4 grid grid-cols-3 gap-3 border-t border-pf-border pt-3">
+                          <div>
+                            <dt className="text-[10px] font-medium text-pf-text-muted">
+                              Your role
+                            </dt>
+                            <dd className="mt-0.5 text-[12px]">{ROLE_LABELS[selected.role]}</dd>
+                          </div>
+                          <div>
+                            <dt className="text-[10px] font-medium text-pf-text-muted">Members</dt>
+                            <dd className="mt-0.5 text-[12px]">{selected.memberCount}</dd>
+                          </div>
+                          <div>
+                            <dt className="text-[10px] font-medium text-pf-text-muted">Created</dt>
+                            <dd className="mt-0.5 text-[12px]">{formatDate(selected.createdAt)}</dd>
+                          </div>
+                        </dl>
+                      </div>
+
+                      <section
+                        className="border-b border-pf-border px-5 py-4"
+                        aria-labelledby="jobs-heading"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <h3 id="jobs-heading" className="text-[13px] font-semibold">
+                            Analysis jobs
+                          </h3>
+                          <span className="text-[11px] text-pf-text-muted">
+                            {jobs.length} {jobs.length === 1 ? "job" : "jobs"}
+                          </span>
+                        </div>
+                        {jobsLoading ? (
                           <p role="status" className="mt-3 text-[12px] text-pf-text-secondary">
-                            Loading audit events...
+                            Loading jobs...
                           </p>
-                        ) : auditError ? (
+                        ) : jobsError ? (
                           <p role="alert" className="mt-3 text-[12px] text-pf-error">
-                            {auditError}
+                            {jobsError}
                           </p>
-                        ) : audit && audit.length > 0 ? (
-                          <ol className="mt-3 space-y-3">
-                            {audit.map((event) => (
-                              <li key={event.id} className="flex gap-2.5">
-                                <span
-                                  aria-hidden="true"
-                                  className="mt-1.5 size-1.5 shrink-0 rounded-full bg-pf-border-strong"
-                                />
+                        ) : jobs.length === 0 ? (
+                          <p className="mt-3 text-[11px] leading-4 text-pf-text-muted">
+                            No analysis jobs yet. A plan review appears when a job has a proposed
+                            plan.
+                          </p>
+                        ) : (
+                          <ul className="mt-3 divide-y divide-pf-border">
+                            {jobs.map((job) => {
+                              const hasPlan = job.currentPlanId !== null;
+                              return (
+                                <li key={job.id}>
+                                  <button
+                                    type="button"
+                                    disabled={!hasPlan}
+                                    onClick={() => setSelectedJob(job)}
+                                    className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 py-2.5 text-left transition-colors hover:bg-pf-surface-hover disabled:cursor-default disabled:hover:bg-transparent"
+                                  >
+                                    <span className="min-w-0 flex-1">
+                                      <span className="block truncate text-[12px] font-medium">
+                                        {job.displayName}
+                                      </span>
+                                      <span className="mt-0.5 block text-[10px] text-pf-text-muted">
+                                        {JOB_GOAL_LABELS[job.goal]} ·{" "}
+                                        {JOB_STATUS_LABELS[job.status]}
+                                      </span>
+                                    </span>
+                                    <span
+                                      className={`shrink-0 text-[10px] font-medium ${
+                                        hasPlan ? "text-pf-accent" : "text-pf-text-muted"
+                                      }`}
+                                    >
+                                      {hasPlan ? "Review plan →" : "No plan yet"}
+                                    </span>
+                                  </button>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        )}
+                      </section>
+
+                      <section
+                        className="border-b border-pf-border px-5 py-4"
+                        aria-labelledby="members-heading"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <h3 id="members-heading" className="text-[13px] font-semibold">
+                            Members
+                          </h3>
+                          <span className="text-[11px] text-pf-text-muted">
+                            {members.length} {members.length === 1 ? "person" : "people"}
+                          </span>
+                        </div>
+
+                        {membersLoading ? (
+                          <p role="status" className="mt-3 text-[12px] text-pf-text-secondary">
+                            Loading members...
+                          </p>
+                        ) : membersError ? (
+                          <p role="alert" className="mt-3 text-[12px] text-pf-error">
+                            {membersError}
+                          </p>
+                        ) : (
+                          <ul className="mt-3 divide-y divide-pf-border">
+                            {members.map((member) => (
+                              <li
+                                key={member.userId}
+                                className="flex items-center justify-between gap-3 py-2.5"
+                              >
                                 <div className="min-w-0">
-                                  <p className="text-[11px] font-medium">
-                                    {ACTION_LABELS[event.action] ?? event.action}
+                                  <p className="truncate text-[12px] font-medium">
+                                    {member.displayName}
                                   </p>
-                                  <p className="mt-0.5 text-[10px] text-pf-text-muted">
-                                    {formatDateTime(event.createdAt)}
-                                    {event.actorId ? (
-                                      <>
-                                        {" · "}
-                                        <span className="font-mono">
-                                          {event.actorId.slice(0, 8)}
-                                        </span>
-                                      </>
-                                    ) : null}
+                                  <p className="truncate text-[11px] text-pf-text-muted">
+                                    {member.email}
                                   </p>
                                 </div>
+                                <span className="shrink-0 text-[11px] text-pf-text-secondary">
+                                  {ROLE_LABELS[member.role]}
+                                </span>
                               </li>
                             ))}
-                          </ol>
+                          </ul>
+                        )}
+
+                        {memberManagement && roles.length > 0 ? (
+                          <form
+                            onSubmit={handleAddMember}
+                            aria-label="Add project member"
+                            className="mt-4 border-t border-pf-border pt-4"
+                          >
+                            <p className="text-[11px] font-medium text-pf-text-secondary">
+                              Add an existing account
+                            </p>
+                            <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_112px]">
+                              <label className="sr-only" htmlFor="member-email">
+                                Member email
+                              </label>
+                              <input
+                                id="member-email"
+                                type="email"
+                                required
+                                value={memberEmail}
+                                onChange={(event) => setMemberEmail(event.target.value)}
+                                placeholder="person@example.com"
+                                className="h-9 min-w-0 rounded-md border border-pf-border-strong bg-pf-surface px-3 text-[12px] transition-colors placeholder:text-pf-text-muted hover:border-pf-text-muted focus:border-pf-accent focus:outline-none"
+                              />
+                              <label className="sr-only" htmlFor="member-role">
+                                Member role
+                              </label>
+                              <select
+                                id="member-role"
+                                value={effectiveMemberRole}
+                                onChange={(event) =>
+                                  setMemberRole(event.target.value as ProjectRole)
+                                }
+                                className="h-9 rounded-md border border-pf-border-strong bg-pf-surface px-2 text-[12px] focus:border-pf-accent focus:outline-none"
+                              >
+                                {roles.map((role) => (
+                                  <option key={role} value={role}>
+                                    {ROLE_LABELS[role]}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <button
+                              type="submit"
+                              disabled={addingMember || memberEmail.trim() === ""}
+                              className="mt-2 h-8 rounded-md border border-pf-border-strong bg-pf-surface px-3 text-[11px] font-medium transition-colors hover:border-pf-text-muted disabled:opacity-55"
+                            >
+                              {addingMember ? "Adding..." : "Add member"}
+                            </button>
+                            {memberError ? (
+                              <p role="alert" className="mt-2 text-[11px] text-pf-error">
+                                {memberError}
+                              </p>
+                            ) : null}
+                            {memberNotice ? (
+                              <p
+                                role="status"
+                                className="mt-2 text-[11px] leading-4 text-pf-success"
+                              >
+                                {memberNotice}
+                              </p>
+                            ) : null}
+                          </form>
                         ) : (
-                          <p className="mt-3 text-[11px] text-pf-text-muted">
-                            No audit events have been recorded for this project.
+                          <p className="mt-3 border-t border-pf-border pt-3 text-[11px] leading-4 text-pf-text-muted">
+                            {selected.role === "viewer"
+                              ? "Viewers can read project data. Member management is restricted."
+                              : "Collaborators can work with project content. Member management is restricted."}
                           </p>
                         )}
                       </section>
-                    ) : null}
-                  </div>
-                )}
-              </div>
-            </section>
+
+                      {canViewAudit(selected.role) ? (
+                        <section className="px-5 py-4" aria-labelledby="audit-heading">
+                          <div className="flex items-center justify-between gap-3">
+                            <h3 id="audit-heading" className="text-[13px] font-semibold">
+                              Audit trail
+                            </h3>
+                            <span className="text-[11px] text-pf-text-muted">Latest 50</span>
+                          </div>
+                          {auditLoading ? (
+                            <p role="status" className="mt-3 text-[12px] text-pf-text-secondary">
+                              Loading audit events...
+                            </p>
+                          ) : auditError ? (
+                            <p role="alert" className="mt-3 text-[12px] text-pf-error">
+                              {auditError}
+                            </p>
+                          ) : audit && audit.length > 0 ? (
+                            <ol className="mt-3 space-y-3">
+                              {audit.map((event) => (
+                                <li key={event.id} className="flex gap-2.5">
+                                  <span
+                                    aria-hidden="true"
+                                    className="mt-1.5 size-1.5 shrink-0 rounded-full bg-pf-border-strong"
+                                  />
+                                  <div className="min-w-0">
+                                    <p className="text-[11px] font-medium">
+                                      {ACTION_LABELS[event.action] ?? event.action}
+                                    </p>
+                                    <p className="mt-0.5 text-[10px] text-pf-text-muted">
+                                      {formatDateTime(event.createdAt)}
+                                      {event.actorId ? (
+                                        <>
+                                          {" · "}
+                                          <span className="font-mono">
+                                            {event.actorId.slice(0, 8)}
+                                          </span>
+                                        </>
+                                      ) : null}
+                                    </p>
+                                  </div>
+                                </li>
+                              ))}
+                            </ol>
+                          ) : (
+                            <p className="mt-3 text-[11px] text-pf-text-muted">
+                              No audit events have been recorded for this project.
+                            </p>
+                          )}
+                        </section>
+                      ) : null}
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
           </div>
         </main>
       </div>

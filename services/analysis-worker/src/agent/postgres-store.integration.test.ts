@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { SQL } from "bun";
 import { createPostgresPlanStore, type PostgresPlanStore } from "./postgres-store";
-import { makeContext, makeValidVulnerabilityPlan } from "./test-helpers";
+import { makeContext, makeValidLoadPlan, makeValidVulnerabilityPlan } from "./test-helpers";
 
 const connectionString = process.env.PROBE_FORGE_TEST_DATABASE_URL;
 const databaseDescribe = connectionString === undefined ? describe.skip : describe;
@@ -19,6 +19,7 @@ databaseDescribe("PostgresPlanStore integration", () => {
   let projectId: string;
   let gitSourceId: string;
   let jobId: string;
+  let loadJobId: string;
 
   beforeAll(async () => {
     if (connectionString === undefined) return;
@@ -56,6 +57,17 @@ databaseDescribe("PostgresPlanStore integration", () => {
       RETURNING id
     `;
     jobId = requiredId(jobRows, "job");
+    const loadJobRows = await admin<{ id: string }[]>`
+      INSERT INTO jobs (
+        project_id, created_by, goal, intensity, status, display_name,
+        git_source_id, source_reference
+      ) VALUES (
+        ${projectId}, ${userId}, 'load_testing', 'low', 'planning',
+        ${"Load planning fixture job"}, ${gitSourceId}, 'refs/heads/main'
+      )
+      RETURNING id
+    `;
+    loadJobId = requiredId(loadJobRows, "load job");
   });
 
   afterAll(async () => {
@@ -217,6 +229,46 @@ databaseDescribe("PostgresPlanStore integration", () => {
       SELECT count(*)::text AS count FROM test_plans WHERE job_id = ${jobId}
     `;
     expect(rows[0]?.count).toBe("4");
+  });
+
+  it("persists load profiles and selectable load scenarios for load plans", async () => {
+    const sessionId = await store.startSession({
+      projectId,
+      jobId: loadJobId,
+      provider: "faux",
+      model: "planner-fixture",
+      metadata: { phase: "planning", attempt: 1 },
+    });
+    const saved = await store.savePlan({
+      sessionId,
+      projectId,
+      jobId: loadJobId,
+      plan: makeValidLoadPlan(),
+      provider: "faux",
+      model: "planner-fixture",
+      createdByAgent: true,
+      fallbackReason: null,
+    });
+    expect(saved.version).toBe(1);
+
+    const scenarioRows = await admin<
+      {
+        scenario_id: string;
+        profile_id: string;
+        selected: boolean;
+        virtual_users: number;
+        name: string;
+      }[]
+    >`
+      SELECT s.id AS scenario_id, s.profile_id, s.selected, p.virtual_users, s.name
+      FROM load_scenarios s
+      JOIN load_profiles p ON p.id = s.profile_id
+      WHERE s.plan_id = ${saved.id}
+    `;
+    expect(scenarioRows).toHaveLength(1);
+    expect(scenarioRows[0]?.name).toBe("Baseline API read");
+    expect(scenarioRows[0]?.virtual_users).toBe(2);
+    expect(scenarioRows[0]?.selected).toBe(false);
   });
 
   it("rejects a plan when the job was cancelled while the session was running", async () => {

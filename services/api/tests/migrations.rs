@@ -171,6 +171,36 @@ async fn migrations_create_and_enforce_core_schema() {
         "migration 0006 did not add approved_load_scenario_ids"
     );
 
+    let plan_review_columns: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM information_schema.columns
+         WHERE table_schema = current_schema()
+           AND (
+             (table_name = 'test_plans' AND column_name = 'revision')
+             OR (table_name = 'plan_approvals' AND column_name = 'plan_revision')
+             OR (table_name = 'planned_tests' AND column_name = 'rationale_references')
+           )",
+    )
+    .fetch_one(&schema_pool)
+    .await
+    .expect("plan review column inventory failed");
+    assert_eq!(
+        plan_review_columns, 3,
+        "migration 0008 did not add plan review revision columns"
+    );
+
+    let approval_run_constraint: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_constraint
+         WHERE connamespace = current_schema()::regnamespace
+           AND conname = 'test_runs_approval_match_fkey'",
+    )
+    .fetch_one(&schema_pool)
+    .await
+    .expect("approval/run constraint inventory failed");
+    assert_eq!(
+        approval_run_constraint, 1,
+        "migration 0009 did not link runs to the matching plan approval"
+    );
+
     let password_hash_columns: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM information_schema.columns
          WHERE table_schema = current_schema()

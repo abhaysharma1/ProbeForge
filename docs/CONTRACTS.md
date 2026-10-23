@@ -127,6 +127,28 @@ existing `job.queued`, `job.failed`, and `job.cancelled` remain valid. A shared
 Rust/TypeScript fixture (`event.claimed.valid.json`) verifies the new enum value
 in both validators.
 
+## Plan review and approval API
+
+The v1 plan payload remains read-only after generation. Phase 8 adds selection and
+approval endpoints around it:
+
+- `GET /api/test-catalog` returns the embedded schema 1 / catalog 0.2.0 entries
+  with adapter availability.
+- `GET /api/jobs/{jobId}/plan` and `GET /api/plans/{planId}` return the plan,
+  catalog metadata, selected flags, revision, and approval summary.
+- `PATCH /api/plans/{planId}` accepts `expectedRevision`, `selectedTestIds`, and
+  `selectedLoadScenarioIds`. It changes only selected flags. Unknown fields,
+  duplicate IDs, and IDs from another plan are rejected.
+- `POST /api/plans/{planId}/approve` accepts `expectedRevision` and
+  `confirmed: true`. It writes an immutable `plan_approvals` snapshot tied to the
+  exact plan version and revision.
+
+All routes are authenticated and return `no-store`. Plan routes are project-scoped;
+the catalog is not tenant data. Viewers may read but not edit or approve. A stale
+revision returns `409 plan_conflict`; a non-current plan returns
+`409 plan_superseded`. Approval writes audit events but does not create a run or
+contact a target.
+
 ## Health contract
 
 The Phase 1 liveness/readiness shape remains in `packages/contracts/src/index.ts`

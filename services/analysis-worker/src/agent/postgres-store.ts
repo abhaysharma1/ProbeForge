@@ -180,13 +180,43 @@ export class PostgresPlanStore implements PlanStore {
             INSERT INTO planned_tests (
               project_id, plan_id, catalog_test_id, name, rationale, risk,
               prerequisites, expected_evidence, target_requirements,
-              requires_explicit_confirmation, configuration, selected
+              requires_explicit_confirmation, configuration, rationale_references, selected
             ) VALUES (
               ${input.projectId}, ${planId}, ${test.catalogTestId}, ${test.name},
               ${test.rationale}, ${test.risk}, ${tx.json(test.prerequisites ?? [])},
               ${test.expectedEvidence}, ${tx.json(test.targetRequirements ?? [])},
               ${test.requiresExplicitConfirmation},
-              ${tx.json(test.configuration ?? {})}, false
+              ${tx.json(test.configuration ?? {})},
+              ${tx.json(test.rationaleReferences ?? [])}, false
+            )
+          `;
+        }
+
+        for (const scenario of input.plan.loadScenarios) {
+          const profile = scenario.profile;
+          const profileRows = await tx<{ id: string }[]>`
+            INSERT INTO load_profiles (
+              project_id, name, virtual_users, arrival_rate_per_second,
+              ramp_up_seconds, duration_seconds, max_requests,
+              max_requests_per_second, stop_conditions
+            ) VALUES (
+              ${input.projectId}, ${scenario.name}, ${profile.virtualUsers ?? null},
+              ${profile.arrivalRatePerSecond ?? null}, ${profile.rampUpSeconds},
+              ${profile.durationSeconds}, ${profile.maxRequests},
+              ${profile.maxRequestsPerSecond}, ${tx.json(profile.stopConditions ?? {})}
+            )
+            RETURNING id
+          `;
+          const profileId = profileRows[0]?.id;
+          if (profileId === undefined) {
+            throw new PlanStoreError("persistence_failed", "unable to persist a load profile");
+          }
+          await tx`
+            INSERT INTO load_scenarios (
+              project_id, plan_id, profile_id, name, schema_version, scenario, selected
+            ) VALUES (
+              ${input.projectId}, ${planId}, ${profileId}, ${scenario.name}, '1',
+              ${tx.json(scenario)}, false
             )
           `;
         }

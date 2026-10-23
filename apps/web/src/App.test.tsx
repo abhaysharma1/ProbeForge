@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
+import type { Job, JobPlan } from "./api";
 
 const USER = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -27,6 +28,131 @@ const MEMBER = {
   joinedAt: "2026-10-20T12:00:00Z",
 };
 
+const JOB: Job = {
+  id: "55555555-5555-4555-8555-555555555555",
+  projectId: PROJECT.id,
+  goal: "vulnerability_testing",
+  intensity: "standard",
+  status: "awaiting_approval",
+  displayName: "Payments plan review",
+  currentPlanId: "66666666-6666-4666-8666-666666666666",
+  createdAt: "2026-10-21T10:00:00Z",
+  updatedAt: "2026-10-21T10:05:00Z",
+};
+
+const PLAN: JobPlan = {
+  id: JOB.currentPlanId as string,
+  projectId: PROJECT.id,
+  jobId: JOB.id,
+  version: 1,
+  revision: 0,
+  status: "proposed",
+  goal: "vulnerability_testing",
+  summary: "Review the discovered route and inspect credential handling.",
+  confidence: 0.72,
+  requiredInputs: ["Authorized target"],
+  limitations: ["No target was contacted while generating this plan."],
+  evidenceReferences: ["src/server.ts"],
+  createdByAgent: true,
+  agentProvider: "faux",
+  agentModel: "planner-fixture",
+  createdAt: "2026-10-21T10:04:00Z",
+  updatedAt: "2026-10-21T10:05:00Z",
+  catalogVersion: "0.2.0",
+  plannedTests: [
+    {
+      id: "77777777-7777-4777-8777-777777777777",
+      catalogTestId: "http.headers.missing",
+      name: "Missing security headers",
+      rationale: "The repository exposes an HTTP route that can be checked for response hardening.",
+      risk: "low",
+      prerequisites: ["Authorized target"],
+      expectedEvidence: "Response headers and observation timestamp.",
+      targetRequirements: ["authorized target origin"],
+      requiresExplicitConfirmation: false,
+      configuration: { route: "/api/items" },
+      rationaleReferences: ["src/server.ts"],
+      selected: false,
+      catalog: {
+        id: "http.headers.missing",
+        name: "Missing security headers",
+        category: "http",
+        risk: "low",
+        description: "Checks a bounded HTTP response for baseline security headers.",
+        prerequisites: ["Authorized target"],
+        toolRequirements: ["http_probe>=0.1"],
+        targetRequirements: ["authorized target origin"],
+        timeoutSeconds: 30,
+        evidenceExpectations: ["Response headers and observation timestamp"],
+        requiresExplicitConfirmation: false,
+        available: false,
+        availabilityNote:
+          "Execution adapter is not implemented yet. Approval records the selected test; it does not start a run.",
+      },
+    },
+    {
+      id: "88888888-8888-4888-8888-888888888888",
+      catalogTestId: "static.secrets.exposure",
+      name: "Potential secret exposure",
+      rationale: "The pinned snapshot can be checked with a non-printing ruleset.",
+      risk: "high",
+      prerequisites: ["Pinned repository snapshot"],
+      expectedEvidence: "Redacted file path and pattern class.",
+      targetRequirements: ["read-only repository snapshot"],
+      requiresExplicitConfirmation: true,
+      configuration: {},
+      rationaleReferences: ["src/config.ts"],
+      selected: false,
+      catalog: {
+        id: "static.secrets.exposure",
+        name: "Potential secret exposure",
+        category: "static",
+        risk: "high",
+        description: "Searches the pinned snapshot for high-confidence credential patterns.",
+        prerequisites: ["Pinned repository snapshot"],
+        toolRequirements: ["static_secret_scanner>=0.1"],
+        targetRequirements: ["read-only repository snapshot"],
+        timeoutSeconds: 60,
+        evidenceExpectations: ["Redacted file path and pattern class"],
+        requiresExplicitConfirmation: true,
+        available: false,
+        availabilityNote:
+          "Execution adapter is not implemented yet. Approval records the selected test; it does not start a run.",
+      },
+    },
+  ],
+  loadScenarios: [],
+  approval: null,
+};
+
+function planWithSelection(selectedTestIds: readonly string[]): JobPlan {
+  return {
+    ...PLAN,
+    revision: 1,
+    plannedTests: PLAN.plannedTests.map((test) => ({
+      ...test,
+      selected: selectedTestIds.includes(test.id),
+    })),
+  };
+}
+
+function approvedPlan(plan: JobPlan): JobPlan {
+  return {
+    ...plan,
+    status: "approved",
+    approval: {
+      id: "99999999-9999-4999-8999-999999999999",
+      planRevision: plan.revision,
+      approvedBy: USER.id,
+      approvedByName: USER.displayName,
+      approvedByEmail: USER.email,
+      approvedAt: "2026-10-21T10:10:00Z",
+      approvedTestIds: plan.plannedTests.filter((test) => test.selected).map((test) => test.id),
+      approvedLoadScenarioIds: [],
+    },
+  };
+}
+
 function mockResponse(body: unknown, status = 200) {
   return {
     ok: status >= 200 && status < 300,
@@ -40,9 +166,14 @@ interface FetchOptions {
   readonly loginStatus?: number;
   readonly projects?: readonly unknown[];
   readonly role?: "owner" | "admin" | "collaborator" | "viewer";
+  readonly jobs?: readonly Job[];
+  readonly plan?: JobPlan;
+  readonly planPatchStatus?: number;
+  readonly planApproveStatus?: number;
 }
 
 function installFetch(options: FetchOptions) {
+  let currentPlan = options.plan ? (JSON.parse(JSON.stringify(options.plan)) as JobPlan) : null;
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
@@ -85,6 +216,85 @@ function installFetch(options: FetchOptions) {
 
     if (url.endsWith("/api/projects") && method === "GET") {
       return mockResponse(options.projects ?? []);
+    }
+
+    if (url.includes("/api/projects/") && url.endsWith("/jobs") && method === "GET") {
+      return mockResponse(options.jobs ?? []);
+    }
+
+    if (url.includes("/jobs/") && url.endsWith("/plan") && method === "GET") {
+      return currentPlan
+        ? mockResponse(currentPlan)
+        : mockResponse({ error: { code: "plan_not_found", message: "Plan not found." } }, 404);
+    }
+
+    if (url.includes("/api/plans/") && url.endsWith("/approve") && method === "POST") {
+      if (options.planApproveStatus && options.planApproveStatus >= 400) {
+        return mockResponse(
+          {
+            error: {
+              code: "plan_conflict",
+              message:
+                "This plan changed since it was loaded. Reload and review the latest revision.",
+            },
+          },
+          options.planApproveStatus,
+        );
+      }
+      if (!currentPlan) {
+        return mockResponse({ error: { code: "plan_not_found", message: "Plan not found." } }, 404);
+      }
+      const body = JSON.parse(String(init?.body)) as { expectedRevision: number };
+      if (body.expectedRevision !== currentPlan.revision) {
+        return mockResponse(
+          {
+            error: {
+              code: "plan_conflict",
+              message:
+                "This plan changed since it was loaded. Reload and review the latest revision.",
+            },
+          },
+          409,
+        );
+      }
+      currentPlan = approvedPlan(currentPlan);
+      return mockResponse(currentPlan);
+    }
+
+    if (url.includes("/api/plans/") && method === "PATCH") {
+      if (options.planPatchStatus && options.planPatchStatus >= 400) {
+        return mockResponse(
+          {
+            error: {
+              code: "plan_conflict",
+              message:
+                "This plan changed since it was loaded. Reload and review the latest revision.",
+            },
+          },
+          options.planPatchStatus,
+        );
+      }
+      if (!currentPlan) {
+        return mockResponse({ error: { code: "plan_not_found", message: "Plan not found." } }, 404);
+      }
+      const body = JSON.parse(String(init?.body)) as {
+        expectedRevision: number;
+        selectedTestIds?: readonly string[];
+      };
+      if (body.expectedRevision !== currentPlan.revision) {
+        return mockResponse(
+          {
+            error: {
+              code: "plan_conflict",
+              message:
+                "This plan changed since it was loaded. Reload and review the latest revision.",
+            },
+          },
+          409,
+        );
+      }
+      currentPlan = planWithSelection(body.selectedTestIds ?? []);
+      return mockResponse(currentPlan);
     }
 
     if (url.includes("/members")) {
@@ -188,6 +398,76 @@ describe("App", () => {
     ).toBeInTheDocument();
     expect(screen.queryByLabelText("Member email")).not.toBeInTheDocument();
     expect(screen.queryByText("Audit trail")).not.toBeInTheDocument();
+  });
+
+  it("reviews a plan, saves the selection, and records an immutable approval", async () => {
+    await renderSignedIn({
+      session: true,
+      projects: [PROJECT],
+      jobs: [JOB],
+      plan: PLAN,
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Payments plan review/ }));
+
+    expect(
+      await screen.findByRole("heading", { name: "Payments plan review" }),
+    ).toBeInTheDocument();
+    expect((await screen.findAllByText("Adapter unavailable")).length).toBeGreaterThan(0);
+    expect(screen.getByText("Explicit confirmation")).toBeInTheDocument();
+    expect(screen.getByText("http.headers.missing")).toBeInTheDocument();
+    expect(screen.getByText("http_probe>=0.1")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("Missing security headers"));
+    fireEvent.click(screen.getByRole("button", { name: "Save selection" }));
+
+    expect(await screen.findByText(/Selection saved at revision 1/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText(/I reviewed the selected tests/));
+    fireEvent.click(screen.getByRole("button", { name: "Approve selected plan" }));
+
+    expect(await screen.findByText(/Approval recorded/)).toBeInTheDocument();
+    expect(await screen.findByText("Immutable approval recorded")).toBeInTheDocument();
+    expect(await screen.findByText(/Approved by Owner/)).toBeInTheDocument();
+  });
+
+  it("shows a reload action when a concurrent edit conflicts", async () => {
+    await renderSignedIn({
+      session: true,
+      projects: [PROJECT],
+      jobs: [JOB],
+      plan: PLAN,
+      planPatchStatus: 409,
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Payments plan review/ }));
+    fireEvent.click(await screen.findByLabelText("Missing security headers"));
+    fireEvent.click(await screen.findByRole("button", { name: "Save selection" }));
+
+    expect(await screen.findByText(/This plan changed since it was loaded/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reload latest plan" })).toBeInTheDocument();
+    expect(screen.queryByText(/Selection saved/)).not.toBeInTheDocument();
+  });
+
+  it("keeps a viewer from changing or approving a plan", async () => {
+    await renderSignedIn({
+      session: true,
+      projects: [{ ...PROJECT, role: "viewer" }],
+      role: "viewer",
+      jobs: [JOB],
+      plan: PLAN,
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Payments plan review/ }));
+
+    expect(
+      await screen.findByText(/your project role does not permit changing the selection/),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Missing security headers")).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Approve selected plan" })).not.toBeInTheDocument();
   });
 
   it("signs out and returns to the login view", async () => {

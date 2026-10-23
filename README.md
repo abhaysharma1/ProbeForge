@@ -11,12 +11,12 @@ The AI agent (Pi) inspects a pinned commit of the user's repository and proposes
 
 ## Status
 
-**Phase 7 — Pi agent integration and plan generation: complete.** See the [phase report](docs/phases/07_planning_report.md).
+**Phase 8 — Test catalog and plan approval UI: complete.** See the [phase report](docs/phases/08_plan_approval_report.md).
 
-- Next permitted phase: **Phase 8 — Test catalog and plan approval UI** (starts only after explicit authorization).
+- Next permitted phase: **Phase 9 — Target validation and authorization** (starts only after explicit authorization).
 - Phase tasks and exit gates: [docs/IMPLEMENTATION_CHECKLIST.md](docs/IMPLEMENTATION_CHECKLIST.md)
 - Decisions, interpretations, and open questions: [docs/DECISION_LOG.md](docs/DECISION_LOG.md)
-- Contract details: [docs/CONTRACTS.md](docs/CONTRACTS.md) · Database details: [docs/DATABASE.md](docs/DATABASE.md) · Authentication and RBAC: [docs/AUTH.md](docs/AUTH.md) · Jobs and queue: [docs/JOBS.md](docs/JOBS.md) · Read-only ingestion: [docs/REPOSITORY_INGESTION.md](docs/REPOSITORY_INGESTION.md) · Static discovery: [docs/DISCOVERY.md](docs/DISCOVERY.md) · Pi planning: [docs/PLANNING.md](docs/PLANNING.md)
+- Contract details: [docs/CONTRACTS.md](docs/CONTRACTS.md) · Database details: [docs/DATABASE.md](docs/DATABASE.md) · Authentication and RBAC: [docs/AUTH.md](docs/AUTH.md) · Jobs and queue: [docs/JOBS.md](docs/JOBS.md) · Read-only ingestion: [docs/REPOSITORY_INGESTION.md](docs/REPOSITORY_INGESTION.md) · Static discovery: [docs/DISCOVERY.md](docs/DISCOVERY.md) · Pi planning: [docs/PLANNING.md](docs/PLANNING.md) · Plan approval: [docs/PLAN_APPROVAL.md](docs/PLAN_APPROVAL.md)
 - Phase reports: [docs/phases/](docs/phases/)
 
 ## Architecture at a glance
@@ -55,8 +55,8 @@ services/scheduler/        Rust scheduler skeleton (health endpoints)
 crates/contracts/          Rust contract types, validation, and shared-fixture tests
 crates/queue/              Shared PostgreSQL job/run queue, leases, fencing, retries, recovery
 packages/contracts/        JSON Schema, TS contracts, Ajv validators, shared fixtures
-packages/test-catalog/     Versioned, non-executable test catalog scaffold
-migrations/                Forward-only PostgreSQL migrations (0001-0007)
+packages/test-catalog/     Versioned, non-executable test catalog (schema 1, catalog 0.2.0)
+migrations/                Forward-only PostgreSQL migrations (0001-0009)
 infra/local/               Docker Compose for local PostgreSQL
 scripts/                   Repository contract check, database check, and local service runner
 docs/                      Normative project documents, contracts/database docs, and phase reports
@@ -83,7 +83,7 @@ cp .env.example .env            # PowerShell: Copy-Item .env.example .env
 bun run db:up                   # start PostgreSQL 18.6 (loopback only)
 # export DATABASE_URL with the same password (see .env.example)
 # PowerShell: $env:DATABASE_URL = "postgres://probeforge:<password>@127.0.0.1:5432/probeforge"
-bun run db:migrate              # apply the schema through migration 0007
+bun run db:migrate              # apply the schema through migration 0009
 bun run user:create -- owner@example.test "Owner"   # prompts for the password
 bun run build:rust              # build the Rust workspace
 bun run dev                     # start all five local services (DATABASE_URL required)
@@ -110,14 +110,14 @@ Stop PostgreSQL with `bun run db:down`.
 | `bun run check:docs` | Required files, doc links, Phase 0-15 coverage, `.env` hygiene, secret patterns |
 | `bun run check:rust` | `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test --workspace` |
 | `bun run check:ts` | Biome lint, strict type checks, Bun/Vitest tests for all TS packages |
-| `bun run check:db` | Migration, auth/RBAC, job API/SSE, and queue lease integration tests (requires `DATABASE_URL`) |
+| `bun run check:db` | Migration, auth/RBAC, job API/SSE, plan approval, and queue lease integration tests (requires `DATABASE_URL`) |
 | `bun run check:services` | Starts all five services, verifies health endpoints, stops them |
 | `bun run build` | Rust workspace build plus the production web build |
 | `bun run format` | Biome format (TS/JSON) and `cargo fmt` |
 
 `check:db` creates random temporary schemas and never touches `public`. It fails if `DATABASE_URL` is missing instead of silently skipping. `check:services` requires a prior `bun run build:rust`, a reachable migrated database, `DATABASE_URL`, and free loopback ports; the API and scheduler readiness endpoints now verify database state. Neither contacts external targets. CI is not configured yet; the documented local checks are the gate until a Git remote exists (decision D-011).
 
-## Phase 5-7 scope and current limitations
+## Phase 5-8 scope and current limitations
 
 - Read-only Git ingestion is implemented as an analysis-worker library and operator CLI (`bun run --cwd services/analysis-worker ingest -- ...`). It is not an HTTP endpoint and is not wired to the job queue or PostgreSQL yet.
 - Supported remote transports are HTTPS with HTTP basic credentials and SSH with an unencrypted private-key secret reference. `file:` is accepted only through explicit local-fixture mode. Hosts, ports, paths, refs, and DNS answers are validated; redirects are disabled.
@@ -128,11 +128,11 @@ Stop PostgreSQL with `bun run db:down`.
 - The shared `crates/queue` uses `FOR UPDATE SKIP LOCKED`, commits claims before processing, and enforces worker leases, heartbeats, fencing, bounded exponential retries, and stale-lease recovery.
 - Ordered `job_events` drive SSE. `Last-Event-ID`/`after` replay is implemented, with `follow=false` for a finite replay stream and safe `stream.error` events on database failure.
 - The scheduler owns a PostgreSQL pool, reports database-aware readiness, promotes due scheduled runs to queued, and recovers expired job leases. Due-run claim logic is implemented and tested for the future execution dispatcher.
-- Pi planning is implemented as an analysis-worker library (`services/analysis-worker/src/agent/`) with a constrained read-only/proposal tool registry, strict v1 validation, deterministic fallback, and a narrow PostgreSQL plan writer. It consumes the Phase 5 snapshot and Phase 6 inventory, but it is not yet wired to the job queue or exposed by an HTTP endpoint. The worker HTTP surface remains health-only.
-- The planner can persist draft `test_plans`, `planned_tests`, `agent_sessions`, and audit records when a caller supplies a `PostgresPlanStore`. There is no authenticated planning API, plan review UI, approval endpoint, target authorization, execution, or reporting yet (Phases 8-13).
-- The vetted catalog is still empty, so a vulnerability-testing fallback cannot be produced until Phase 8 adds catalog entries. Load fallback is limited to sorted literal `GET`/`HEAD` routes and a conservative baseline profile.
-- The web app still shows the Phase 3 project workspace; job creation/status and plan review UI work is deferred to Phase 8+.
-- Versioned v1 contracts now include `job.claimed` and `job.retry_scheduled` events; catalog tests remain empty but validated.
+- Pi planning is implemented as an analysis-worker library (`services/analysis-worker/src/agent/`) with a constrained read-only/proposal tool registry, strict v1 validation, deterministic fallback, and a narrow PostgreSQL plan writer. It consumes the Phase 5 snapshot and Phase 6 inventory, and the control plane now exposes authenticated plan review/approval APIs. It is still not wired to an authenticated worker claim/dispatch path; the worker HTTP surface remains health-only.
+- Plans can be reviewed, selected, and approved with an immutable snapshot. Target registration/authorization, execution adapters, run creation, and reporting remain absent (Phases 9-13).
+- The versioned catalog now contains inert entries (catalog 0.2.0), but every execution adapter is reported as unavailable until Phase 10. Approval records the selected test set and does not start a run.
+- The web app now shows analysis jobs and a focused plan review, but there is still no job creation UI. Jobs are created through the API and plans must come from the worker/seed data until the authenticated job path is completed.
+- Versioned v1 contracts now include `job.claimed` and `job.retry_scheduled` events; catalog entries are populated and validated in TypeScript and Rust.
 - All services bind to loopback by default.
 
 ## Security invariants

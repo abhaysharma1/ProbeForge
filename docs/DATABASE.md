@@ -10,7 +10,7 @@ readiness. The browser never connects to PostgreSQL.
 ```bash
 bun run db:up         # start PostgreSQL 18.6 on 127.0.0.1:5432
 bun run db:migrate    # apply forward-only migrations (reads DATABASE_URL)
-bun run check:db      # run migration and auth/RBAC integration tests (reads DATABASE_URL)
+bun run check:db      # run migration, auth/RBAC, jobs, plan approval, and queue integration tests (reads DATABASE_URL)
 bun run db:down       # stop PostgreSQL, keep the volume
 bun run db:reset      # destructive: stop, delete the volume, start empty
 ```
@@ -27,7 +27,7 @@ string. The test runner sets `PROBE_FORGE_REQUIRE_DB_TESTS=1`, so a missing
 Migrations live in `migrations/` and are applied by
 `cargo run -p probe-forge-api --bin migrate`, which uses SQLx's runtime migrator.
 
-- **Forward-only.** Migrations are ordered (`0001` … `0007` today) and are never
+- **Forward-only.** Migrations are ordered (`0001` … `0009` today) and are never
   edited after being applied. Fix a mistake with a new migration.
 - **Do not use `sqlx migrate revert` in shared or production environments.** No
   down migrations are maintained. SQLx records applied versions in
@@ -58,6 +58,8 @@ migrator is idempotent because SQLx skips already-applied versions.
 | `0005_runs.sql` | `load_profiles`, `load_scenarios`, `schedules`, `test_runs`, `test_results`, `evidence`, `run_metrics`, `agent_sessions`, `audit_log` | Bounded load profiles, due schedules, run shape/leases, result/evidence/metric records, append-only audit |
 | `0006_approval_scenarios.sql` | `plan_approvals` | Adds approved load-scenario IDs and allows either test or scenario selections |
 | `0007_auth_sessions.sql` | `users`, `auth_sessions`, `auth_login_attempts` | Argon2id password hash, opaque session-token digests, revocation/expiry indexes, hashed login-rate-limit keys |
+| `0008_plan_review.sql` | `test_plans`, `plan_approvals`, `planned_tests` | Plan selection revision, approval revision evidence, rationale references |
+| `0009_approval_run_match.sql` | `plan_approvals`, `test_runs` | Composite approval/plan/version foreign key for run integrity |
 
 Every project-scoped table carries `project_id` and cascades from `projects`
 except where a deliberate restriction preserves approval/authorization history.
@@ -91,11 +93,14 @@ constraints above remain the second line of defense.
 - Only `vulnerability_testing` and `load_testing` are legal job goals.
 - `vulnerability_testing` runs require a planned test and no load scenario;
   `load_testing` runs require a scenario and profile and no planned test.
-- Approved plans and target authorizations preserve their scope. A
-  `plan_approvals` row records the selected tests or scenarios and cannot be
-  updated; approving a revision creates a new plan version. Updating the scope
-  or limits of an authorization fails; a revocation timestamp is the only
-  permitted update, and authorizations cannot be deleted.
+- Plan selection changes increment `test_plans.revision` and require the
+  reviewed revision. A `plan_approvals` row records the selected tests or
+  scenarios, the reviewed revision, and an immutable snapshot; it cannot be
+  updated or deleted. `test_runs.plan_approval_id` is `NOT NULL`, and the
+  composite approval/plan/version foreign key prevents citing an approval for a
+  different plan version. Updating the scope or limits of a target authorization
+  fails; a revocation timestamp is the only permitted update, and authorizations
+  cannot be deleted.
 - Job events are append-only and ordered per job. The API emits
   `job.queued`, `job.claimed`, `job.retry_scheduled`, `job.failed`,
   `job.cancelled`, `plan.proposed`, and `run.started`; SSE replay uses the
@@ -117,7 +122,8 @@ constraints above remain the second line of defense.
 1. Creates a random schema (`pf_test_<pid>_<nanos>`), never `public`.
 2. Creates a pool whose connections set `search_path` to that schema.
 3. Applies all migrations, then re-applies to prove idempotence.
-4. Asserts every expected table and key index exists.
+4. Asserts every expected table, key index, plan-review column, and
+   approval/run constraint exists.
 5. Seeds a complete fixture chain: user → project → Git source → job → snapshot →
    plan → planned test → approval → target → authorization → load profile →
    scenario → schedule → run → result → evidence → event → metric → agent session

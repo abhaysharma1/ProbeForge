@@ -121,11 +121,22 @@ describe("validateCandidatePlan", () => {
     expect(issueCodes(load)).toContain("invalid_contract");
   });
 
-  it("rejects load paths that could escape the approved origin", () => {
+  it("rejects duplicate load scenario names and unsafe load paths", () => {
     const base = makeValidLoadPlan().loadScenarios[0];
     if (base === undefined) throw new Error("load fixture is missing a scenario");
     const request = base.requests[0];
     if (request === undefined) throw new Error("load fixture is missing a request");
+
+    const duplicate = validateCandidatePlan(
+      makeValidLoadPlan({ loadScenarios: [base, base] }),
+      makeContext({
+        goal: "load_testing",
+        limits: { ...DEFAULT_PLANNING_LIMITS, maxLoadScenarios: 5 },
+      }),
+    );
+    expect(duplicate.ok).toBe(false);
+    expect(issueCodes(duplicate)).toContain("duplicate_load_scenario");
+
     const unsafe = validateCandidatePlan(
       makeValidLoadPlan({
         loadScenarios: [{ ...base, requests: [{ ...request, path: "//metadata.test/latest" }] }],

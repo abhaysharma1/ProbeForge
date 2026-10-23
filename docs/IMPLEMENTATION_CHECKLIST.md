@@ -204,25 +204,34 @@ Legend: `[x]` done with evidence - `[ ]` not done.
 
 ## Phase 8 — Test catalog and plan approval UI
 
-**Status:** Not started
+**Status:** Complete
 
 **Tasks**
 
-- [ ] Build a versioned catalog with stable test IDs and schemas
-- [ ] Include name, category, description, risk, prerequisites, tool requirements, target requirements, timeout, evidence expectations, and confirmation requirements
-- [ ] Implement `GET` and `PATCH` plan APIs
-- [ ] Implement plan versioning and immutable approval snapshots
-- [ ] Build UI to display recommendations, rationale, prerequisites, risks, unavailable tools, and confidence
-- [ ] Allow users to select/deselect supported tests and review configuration
-- [ ] Do not allow edits to arbitrary shell strings
-- [ ] Audit who approved which test set and when
+- [x] Build a versioned catalog with stable test IDs and schemas
+- [x] Include name, category, description, risk, prerequisites, tool requirements, target requirements, timeout, evidence expectations, and confirmation requirements
+- [x] Implement `GET` and `PATCH` plan APIs
+- [x] Implement plan versioning and immutable approval snapshots
+- [x] Build UI to display recommendations, rationale, prerequisites, risks, unavailable tools, and confidence
+- [x] Allow users to select/deselect supported tests and review configuration
+- [x] Do not allow edits to arbitrary shell strings
+- [x] Audit who approved which test set and when
 
 **Exit gate**
 
-- [ ] User can review and select tests from a generated plan
-- [ ] Approval produces an immutable versioned snapshot
-- [ ] Concurrent plan edits are detected and resolved safely
-- [ ] No run can be created without approval
+- [x] User can review and select tests from a generated plan
+- [x] Approval produces an immutable versioned snapshot
+- [x] Concurrent plan edits are detected and resolved safely
+- [x] No run can be created without approval
+
+**Evidence**
+
+- Catalog: `packages/test-catalog/catalog.json` (schema 1, catalog 0.2.0)
+- API/domain: `services/api/src/catalog.rs`, `services/api/src/plans.rs`
+- UI: `apps/web/src/PlanReview.tsx`, `apps/web/src/ProjectsView.tsx`
+- Tests: `cargo test --workspace` with command-scoped `DATABASE_URL`; `bun run check:db`; `bun run check` (analysis worker 111 pass / 7 skip; test-catalog 6; web 8; contracts 46)
+- Browser check: Playwright against local API + Vite; desktop 1440×1200 and mobile 390×844; selection/save verified
+- Report: `docs/phases/08_plan_approval_report.md`; design: `docs/PLAN_APPROVAL.md`
 
 ## Phase 9 — Target validation and authorization
 

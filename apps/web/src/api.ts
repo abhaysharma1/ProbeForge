@@ -1,5 +1,7 @@
 export type ProjectRole = "owner" | "admin" | "collaborator" | "viewer";
 
+import type { LoadProfile, LoadRequest, Risk } from "@probe-forge/contracts";
+
 export interface AuthUser {
   readonly id: string;
   readonly email: string;
@@ -46,6 +48,108 @@ export interface AuditEvent {
   readonly resourceId: string | null;
   readonly metadata: Record<string, unknown>;
   readonly createdAt: string;
+}
+
+export type JobGoal = "vulnerability_testing" | "load_testing";
+export type JobStatus =
+  | "draft"
+  | "queued"
+  | "analyzing"
+  | "planning"
+  | "awaiting_approval"
+  | "failed"
+  | "cancelled"
+  | "expired";
+
+export interface Job {
+  readonly id: string;
+  readonly projectId: string;
+  readonly goal: JobGoal;
+  readonly intensity: string;
+  readonly status: JobStatus;
+  readonly displayName: string;
+  readonly currentPlanId: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export type CatalogCategory = "static" | "http" | "network" | "load";
+
+export interface CatalogEntry {
+  readonly id: string;
+  readonly name: string;
+  readonly category: CatalogCategory;
+  readonly risk: Risk;
+  readonly description: string;
+  readonly prerequisites: readonly string[];
+  readonly toolRequirements: readonly string[];
+  readonly targetRequirements: readonly string[];
+  readonly timeoutSeconds: number;
+  readonly evidenceExpectations: readonly string[];
+  readonly requiresExplicitConfirmation: boolean;
+  readonly available: boolean;
+  readonly availabilityNote: string | null;
+}
+
+export interface PlannedTest {
+  readonly id: string;
+  readonly catalogTestId: string;
+  readonly name: string;
+  readonly rationale: string;
+  readonly risk: Risk;
+  readonly prerequisites: readonly string[];
+  readonly expectedEvidence: string;
+  readonly targetRequirements: readonly string[];
+  readonly requiresExplicitConfirmation: boolean;
+  readonly configuration: Record<string, unknown>;
+  readonly rationaleReferences: readonly string[];
+  readonly selected: boolean;
+  readonly catalog: CatalogEntry | null;
+}
+
+export interface PlanLoadScenario {
+  readonly id: string;
+  readonly name: string;
+  readonly description: string;
+  readonly requests: readonly LoadRequest[];
+  readonly profile: LoadProfile;
+  readonly credentialRef: string | null;
+  readonly selected: boolean;
+}
+
+export interface PlanApprovalSummary {
+  readonly id: string;
+  readonly planRevision: number;
+  readonly approvedBy: string;
+  readonly approvedByName: string;
+  readonly approvedByEmail: string;
+  readonly approvedAt: string;
+  readonly approvedTestIds: readonly string[];
+  readonly approvedLoadScenarioIds: readonly string[];
+}
+
+export interface JobPlan {
+  readonly id: string;
+  readonly projectId: string;
+  readonly jobId: string;
+  readonly version: number;
+  readonly revision: number;
+  readonly status: "draft" | "proposed" | "approved" | "superseded" | "rejected";
+  readonly goal: JobGoal;
+  readonly summary: string;
+  readonly confidence: number;
+  readonly requiredInputs: readonly string[];
+  readonly limitations: readonly string[];
+  readonly evidenceReferences: readonly string[];
+  readonly createdByAgent: boolean;
+  readonly agentProvider: string | null;
+  readonly agentModel: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly catalogVersion: string;
+  readonly plannedTests: readonly PlannedTest[];
+  readonly loadScenarios: readonly PlanLoadScenario[];
+  readonly approval: PlanApprovalSummary | null;
 }
 
 interface ErrorEnvelope {
@@ -124,6 +228,39 @@ export function logout(csrfToken: string): Promise<void> {
 
 export function listProjects(): Promise<Project[]> {
   return request<Project[]>("/projects");
+}
+
+export function listJobs(projectId: string): Promise<Job[]> {
+  return request<Job[]>(`/projects/${projectId}/jobs`);
+}
+
+export function getJobPlan(jobId: string): Promise<JobPlan> {
+  return request<JobPlan>(`/jobs/${jobId}/plan`);
+}
+
+export function updatePlanSelection(
+  planId: string,
+  expectedRevision: number,
+  selectedTestIds: readonly string[],
+  selectedLoadScenarioIds: readonly string[],
+  csrfToken: string,
+): Promise<JobPlan> {
+  return unsafeRequest<JobPlan>("PATCH", `/plans/${planId}`, csrfToken, {
+    expectedRevision,
+    selectedTestIds,
+    selectedLoadScenarioIds,
+  });
+}
+
+export function approvePlan(
+  planId: string,
+  expectedRevision: number,
+  csrfToken: string,
+): Promise<JobPlan> {
+  return unsafeRequest<JobPlan>("POST", `/plans/${planId}/approve`, csrfToken, {
+    expectedRevision,
+    confirmed: true,
+  });
 }
 
 export function createProject(name: string, slug: string, csrfToken: string): Promise<Project> {

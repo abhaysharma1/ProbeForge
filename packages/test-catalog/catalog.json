@@ -1,5 +1,136 @@
 {
   "schemaVersion": "1",
-  "catalogVersion": "0.1.0",
-  "entries": []
+  "catalogVersion": "0.2.0",
+  "entries": [
+    {
+      "id": "http.headers.missing",
+      "name": "Missing security headers",
+      "category": "http",
+      "risk": "low",
+      "description": "Checks an authorized HTTP response for missing baseline security headers such as HSTS, CSP, X-Content-Type-Options, and Referrer-Policy.",
+      "prerequisites": ["An authorized target origin", "At least one discovered HTTP route"],
+      "toolRequirements": ["http_probe>=0.1"],
+      "targetRequirements": ["authorized target origin"],
+      "timeoutSeconds": 30,
+      "evidenceExpectations": [
+        "Response status and security headers for each tested route",
+        "Route path and observation timestamp"
+      ],
+      "requiresExplicitConfirmation": false
+    },
+    {
+      "id": "http.cors.misconfiguration",
+      "name": "CORS misconfiguration",
+      "category": "http",
+      "risk": "medium",
+      "description": "Reviews CORS response headers for overly broad origins or credential combinations on an authorized route.",
+      "prerequisites": [
+        "An authorized target origin",
+        "A discovered route that returns CORS headers"
+      ],
+      "toolRequirements": ["http_probe>=0.1"],
+      "targetRequirements": ["authorized target origin"],
+      "timeoutSeconds": 30,
+      "evidenceExpectations": [
+        "Request Origin value and CORS response headers",
+        "Route path and observation timestamp"
+      ],
+      "requiresExplicitConfirmation": false
+    },
+    {
+      "id": "http.auth.rate-limit",
+      "name": "Authentication rate limiting",
+      "category": "http",
+      "risk": "medium",
+      "description": "Observes a bounded number of authentication attempts to assess whether rate limiting is present. The adapter must enforce a small request budget.",
+      "prerequisites": [
+        "An authorized target origin",
+        "An authentication route discovered from the repository",
+        "Approved request and timing limits"
+      ],
+      "toolRequirements": ["http_probe>=0.1"],
+      "targetRequirements": ["authorized target origin", "approved request limits"],
+      "timeoutSeconds": 60,
+      "evidenceExpectations": [
+        "Attempt count, response status distribution, and Retry-After headers",
+        "Observation window and target route"
+      ],
+      "requiresExplicitConfirmation": false
+    },
+    {
+      "id": "network.tls.baseline",
+      "name": "TLS baseline configuration",
+      "category": "network",
+      "risk": "medium",
+      "description": "Inspects the TLS handshake and certificate metadata for an authorized HTTPS origin without changing target state.",
+      "prerequisites": [
+        "An authorized HTTPS target origin",
+        "Network access permitted by target authorization"
+      ],
+      "toolRequirements": ["tls_probe>=0.1"],
+      "targetRequirements": ["authorized HTTPS target origin"],
+      "timeoutSeconds": 30,
+      "evidenceExpectations": [
+        "Negotiated protocol, cipher suite, and certificate metadata",
+        "Observation timestamp and target hostname"
+      ],
+      "requiresExplicitConfirmation": false
+    },
+    {
+      "id": "static.secrets.exposure",
+      "name": "Potential secret exposure",
+      "category": "static",
+      "risk": "high",
+      "description": "Searches the pinned repository snapshot for high-confidence credential patterns. The adapter must never print the matched secret value.",
+      "prerequisites": ["A pinned repository snapshot", "Approved secret-pattern ruleset"],
+      "toolRequirements": ["static_secret_scanner>=0.1"],
+      "targetRequirements": ["read-only repository snapshot"],
+      "timeoutSeconds": 60,
+      "evidenceExpectations": [
+        "File path, pattern class, and redacted evidence only",
+        "Rule identifier and confidence"
+      ],
+      "requiresExplicitConfirmation": true
+    },
+    {
+      "id": "static.dependencies.known-vulnerable",
+      "name": "Dependencies with known advisories",
+      "category": "static",
+      "risk": "high",
+      "description": "Compares parsed dependency inventory against an approved vulnerability advisory dataset. It does not install or execute dependencies.",
+      "prerequisites": [
+        "A pinned repository snapshot",
+        "A parsed manifest or lockfile inventory",
+        "An approved advisory dataset version"
+      ],
+      "toolRequirements": ["dependency_advisory_matcher>=0.1"],
+      "targetRequirements": ["read-only repository snapshot", "approved advisory source version"],
+      "timeoutSeconds": 120,
+      "evidenceExpectations": [
+        "Dependency name, declared version, advisory identifier, and affected range",
+        "Manifest path and redacted evidence"
+      ],
+      "requiresExplicitConfirmation": true
+    },
+    {
+      "id": "load.baseline",
+      "name": "Baseline load profile",
+      "category": "load",
+      "risk": "low",
+      "description": "Runs a conservative baseline load profile against one authorized literal route. The profile must remain within approved rate, duration, and request limits.",
+      "prerequisites": [
+        "An authorized load target",
+        "A literal GET or HEAD route",
+        "Approved rate and duration limits"
+      ],
+      "toolRequirements": ["k6>=1.0"],
+      "targetRequirements": ["authorized load target", "approved rate and duration limits"],
+      "timeoutSeconds": 300,
+      "evidenceExpectations": [
+        "Request count, throughput, error rate, and latency percentiles",
+        "Profile configuration and observation window"
+      ],
+      "requiresExplicitConfirmation": false
+    }
+  ]
 }

@@ -1,8 +1,10 @@
 pub mod audit;
 pub mod auth;
+pub mod catalog;
 pub mod cookies;
 pub mod error;
 pub mod jobs;
+pub mod plans;
 pub mod projects;
 
 use std::{fmt, net::SocketAddr, sync::Arc, time::Duration};
@@ -174,6 +176,7 @@ pub fn router(state: AppState) -> Router {
         )
         .merge(projects::routes())
         .merge(jobs::routes())
+        .merge(plans::routes())
         // Authentication runs before CSRF so an anonymous unsafe request gets a
         // consistent 401 rather than a CSRF 403. Authenticated unsafe requests
         // still pass through the CSRF guard.
