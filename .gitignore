@@ -1,0 +1,41 @@
+# ProbeForge repository ignores.
+# Never commit real secrets, credentials, tokens, target access details, or scan evidence.
+
+# Environment files (placeholders only; commit .env.example instead)
+.env
+.env.*
+!.env.example
+
+# Node / TypeScript
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+.vite/
+.turbo/
+.eslintcache
+*.log
+
+# Rust
+target/
+**/*.rs.bk
+
+# Runtime workspaces (cloned repositories, execution artifacts)
+workspaces/
+tmp/
+
+# Local databases
+*.sqlite
+*.sqlite3
+*.db
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Test and browser-test outputs
+test-results/
+playwright-report/
