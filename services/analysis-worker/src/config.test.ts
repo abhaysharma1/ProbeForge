@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { DEFAULT_PLANNING_LIMITS } from "./agent/limits";
 import { loadConfig, WorkerConfigError } from "./config";
 import { DEFAULT_INGESTION_LIMITS } from "./repository/limits";
 
@@ -10,6 +11,11 @@ const DEFAULT_CONFIG = {
     allowedGitHosts: ["github.com", "gitlab.com", "bitbucket.org"],
     allowLocalFixtures: false,
     auditLogPath: null,
+  },
+  planning: {
+    provider: null,
+    model: null,
+    limits: DEFAULT_PLANNING_LIMITS,
   },
 };
 
@@ -89,5 +95,43 @@ describe("loadConfig", () => {
 
   it("rejects an empty hostname", () => {
     expect(() => loadConfig({ PROBE_FORGE_ANALYSIS_WORKER_HOST: "  " })).toThrow(WorkerConfigError);
+  });
+
+  it("accepts an optional planning provider/model pair and bounded limits", () => {
+    const config = loadConfig({
+      PROBE_FORGE_PLANNING_PROVIDER: "anthropic",
+      PROBE_FORGE_PLANNING_MODEL: "claude-sonnet-4-6",
+      PROBE_FORGE_PLANNING_MAX_MODEL_CALLS: "4",
+      PROBE_FORGE_PLANNING_MAX_TOOL_CALLS: "10",
+      PROBE_FORGE_PLANNING_MAX_WALL_TIME_MS: "30000",
+      PROBE_FORGE_PLANNING_MAX_PLANNED_TESTS: "8",
+    });
+    expect(config.planning.provider).toBe("anthropic");
+    expect(config.planning.model).toBe("claude-sonnet-4-6");
+    expect(config.planning.limits.maxModelCalls).toBe(4);
+    expect(config.planning.limits.maxToolCalls).toBe(10);
+    expect(config.planning.limits.maxWallTimeMs).toBe(30_000);
+    expect(config.planning.limits.maxPlannedTests).toBe(8);
+  });
+
+  it("rejects partial, malformed, or unsafe planning configuration", () => {
+    expect(() => loadConfig({ PROBE_FORGE_PLANNING_PROVIDER: "anthropic" })).toThrow(
+      WorkerConfigError,
+    );
+    expect(() =>
+      loadConfig({
+        PROBE_FORGE_PLANNING_PROVIDER: "anthropic",
+        PROBE_FORGE_PLANNING_MODEL: "model with spaces",
+      }),
+    ).toThrow(WorkerConfigError);
+    expect(() =>
+      loadConfig({
+        PROBE_FORGE_PLANNING_PROVIDER: "anthropic",
+        PROBE_FORGE_PLANNING_MODEL: "claude-sonnet-4-6",
+        PROBE_FORGE_PLANNING_MAX_TOOL_OUTPUT_BYTES: "4096",
+        PROBE_FORGE_PLANNING_MAX_TOTAL_TOOL_OUTPUT_BYTES: "2048",
+      }),
+    ).toThrow(WorkerConfigError);
+    expect(() => loadConfig({ PROBE_FORGE_PLANNING_MAX_TURNS: "0" })).toThrow(WorkerConfigError);
   });
 });

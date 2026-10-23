@@ -33,6 +33,7 @@ Do not resolve a genuine conflict silently. Choose the safest minimal interpreta
 | [JOBS.md](JOBS.md) | Job API, queue claims, leases, fencing, retries, events, SSE replay, and scheduler behavior |
 | [REPOSITORY_INGESTION.md](REPOSITORY_INGESTION.md) | Read-only Git URL policy, secret references, workspace isolation, bounds, snapshots, audit events, and CLI |
 | [DISCOVERY.md](DISCOVERY.md) | Static application inventory, supported parsers, provenance, ambiguity, limits, and the bounded Pi discovery toolset |
+| [PLANNING.md](PLANNING.md) | Pi planning, tool registry, plan validation, budgets, fallback, versioning, and persistence |
 | [phases/](phases/) | One completion report per phase |
 
 ## Phase reports
@@ -46,6 +47,7 @@ Do not resolve a genuine conflict silently. Choose the safest minimal interpreta
 | 4 | [04_jobs_queue_report.md](phases/04_jobs_queue_report.md) |
 | 5 | [05_git_ingestion_report.md](phases/05_git_ingestion_report.md) |
 | 6 | [06_static_discovery_report.md](phases/06_static_discovery_report.md) |
+| 7 | [07_planning_report.md](phases/07_planning_report.md) |
 
 `docs/frontend_design.md` is an alias that points to the canonical
 [06_frontend_design.md](06_frontend_design.md), because the agent instructions

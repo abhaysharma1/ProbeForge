@@ -262,6 +262,16 @@ Format per decision: status, context, decision, rationale, alternatives, impact.
 - **Impact:** Phase 7 must wire the toolset to Pi, define model-facing schemas/token budgets, and decide how inventories accompany claimed jobs. Frame parsers are line-oriented and intentionally incomplete; `docs/DISCOVERY.md` records supported frameworks and limitations. JAX-RS and browser/UI frameworks remain explicitly unsupported.
 
 
+### D-028 - Phase 7 planning is a bounded library with server-only persistence
+
+- **Date:** 2026-10-23
+- **Status:** Accepted (Phase 7 scope)
+- **Context:** Phase 7 must integrate Pi, constrain its tools, validate plans, bound cost/time/output, survive model outages, and version plans without creating an unauthenticated planning endpoint or giving Pi database access. No worker dispatcher exists yet.
+- **Decision:** Implement plan generation as a typed analysis-worker library. Pi receives only read-only repository/discovery/catalog tools plus `plan_validate` and `plan_propose`; strict v1 schema validation, policy checks, fallback generation, PostgreSQL persistence, version allocation, and audit writes remain server-side stages outside the model's tool set. Use one agent session per model attempt and a separate `probe-forge/deterministic-fallback-v1` session for a fallback draft. Allocate plan versions under a job-row lock, reject saves on terminal sessions, and keep the worker HTTP surface health-only until an authenticated dispatcher is designed.
+- **Rationale:** This preserves least privilege and tenant isolation while satisfying plan generation and the Phase 7 gate without inventing queue/API authorization. A server-owned fallback keeps jobs recoverable without pretending the model succeeded. Faux-provider tests prove the integration offline and deterministically.
+- **Alternatives:** Give Pi a direct database writer (rejected: bypasses policy and tenant checks); expose an unauthenticated planning endpoint (rejected: no worker auth contract); add a shell or generic HTTP tool (rejected: prompt injection could reach execution); fail the job on model outage (rejected: loses recoverability and fabricates a terminal state); persist raw model transcripts (rejected: secret and prompt-injection exposure).
+- **Impact:** Phase 8 must add plan read/update/approval APIs and the authenticated worker claim/dispatch path. The vetted catalog is still empty, so a vulnerability fallback is unavailable until catalog entries exist. Load fallback is limited to sorted literal `GET`/`HEAD` routes and a conservative baseline profile. Plans are drafts, never approvals or run authorization. See `docs/PLANNING.md`.
+
 ## Open questions
 
 | ID | Question | Needed by | Notes |

@@ -12,7 +12,9 @@
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "1.4.0",
-    "@probe-forge/contracts": "workspace:*"
+    "@earendil-works/pi-ai": "1.4.0",
+    "@probe-forge/contracts": "workspace:*",
+    "@probe-forge/test-catalog": "workspace:*"
   },
   "devDependencies": {
     "@types/bun": "1.4.4",

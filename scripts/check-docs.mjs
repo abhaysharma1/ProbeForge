@@ -38,6 +38,7 @@ const REQUIRED_FILES = [
   "docs/JOBS.md",
   "docs/REPOSITORY_INGESTION.md",
   "docs/DISCOVERY.md",
+  "docs/PLANNING.md",
   "docs/06_frontend_design.md",
   "docs/frontend_design.md",
   "docs/01_what_we_are_developing.md",
@@ -52,6 +53,7 @@ const REQUIRED_FILES = [
   "docs/phases/04_jobs_queue_report.md",
   "docs/phases/05_git_ingestion_report.md",
   "docs/phases/06_static_discovery_report.md",
+  "docs/phases/07_planning_report.md",
   "infra/local/compose.yaml",
   "crates/contracts/Cargo.toml",
   "crates/queue/Cargo.toml",
@@ -91,6 +93,7 @@ const LINKED_DOCS = [
   "docs/JOBS.md",
   "docs/REPOSITORY_INGESTION.md",
   "docs/DISCOVERY.md",
+  "docs/PLANNING.md",
 ];
 
 // High-signal patterns only; generic words like "password" appear in policy prose on purpose.

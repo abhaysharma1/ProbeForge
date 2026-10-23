@@ -11,12 +11,12 @@ The AI agent (Pi) inspects a pinned commit of the user's repository and proposes
 
 ## Status
 
-**Phase 6 — static discovery and application model: complete.** See the [phase report](docs/phases/06_static_discovery_report.md).
+**Phase 7 — Pi agent integration and plan generation: complete.** See the [phase report](docs/phases/07_planning_report.md).
 
-- Next permitted phase: **Phase 7 — Pi agent integration and plan generation** (starts only after explicit authorization).
+- Next permitted phase: **Phase 8 — Test catalog and plan approval UI** (starts only after explicit authorization).
 - Phase tasks and exit gates: [docs/IMPLEMENTATION_CHECKLIST.md](docs/IMPLEMENTATION_CHECKLIST.md)
 - Decisions, interpretations, and open questions: [docs/DECISION_LOG.md](docs/DECISION_LOG.md)
-- Contract details: [docs/CONTRACTS.md](docs/CONTRACTS.md) · Database details: [docs/DATABASE.md](docs/DATABASE.md) · Authentication and RBAC: [docs/AUTH.md](docs/AUTH.md) · Jobs and queue: [docs/JOBS.md](docs/JOBS.md) · Read-only ingestion: [docs/REPOSITORY_INGESTION.md](docs/REPOSITORY_INGESTION.md) · Static discovery: [docs/DISCOVERY.md](docs/DISCOVERY.md)
+- Contract details: [docs/CONTRACTS.md](docs/CONTRACTS.md) · Database details: [docs/DATABASE.md](docs/DATABASE.md) · Authentication and RBAC: [docs/AUTH.md](docs/AUTH.md) · Jobs and queue: [docs/JOBS.md](docs/JOBS.md) · Read-only ingestion: [docs/REPOSITORY_INGESTION.md](docs/REPOSITORY_INGESTION.md) · Static discovery: [docs/DISCOVERY.md](docs/DISCOVERY.md) · Pi planning: [docs/PLANNING.md](docs/PLANNING.md)
 - Phase reports: [docs/phases/](docs/phases/)
 
 ## Architecture at a glance
@@ -49,7 +49,7 @@ Boundaries that must not be crossed:
 ```text
 apps/web/                  React 19 + TypeScript + Vite 8 + Tailwind 4 dashboard
 services/api/              Rust + Axum control plane (auth, projects/RBAC, jobs/SSE, readiness)
-services/analysis-worker/  Bun + TypeScript worker (health, read-only ingestion, static discovery)
+services/analysis-worker/  Bun + TypeScript worker (health, read-only ingestion, discovery, Pi planning)
 services/execution-worker/ Rust execution-worker skeleton (health endpoints)
 services/scheduler/        Rust scheduler skeleton (health endpoints)
 crates/contracts/          Rust contract types, validation, and shared-fixture tests
@@ -117,7 +117,7 @@ Stop PostgreSQL with `bun run db:down`.
 
 `check:db` creates random temporary schemas and never touches `public`. It fails if `DATABASE_URL` is missing instead of silently skipping. `check:services` requires a prior `bun run build:rust`, a reachable migrated database, `DATABASE_URL`, and free loopback ports; the API and scheduler readiness endpoints now verify database state. Neither contacts external targets. CI is not configured yet; the documented local checks are the gate until a Git remote exists (decision D-011).
 
-## Phase 5 scope and current limitations
+## Phase 5-7 scope and current limitations
 
 - Read-only Git ingestion is implemented as an analysis-worker library and operator CLI (`bun run --cwd services/analysis-worker ingest -- ...`). It is not an HTTP endpoint and is not wired to the job queue or PostgreSQL yet.
 - Supported remote transports are HTTPS with HTTP basic credentials and SSH with an unencrypted private-key secret reference. `file:` is accepted only through explicit local-fixture mode. Hosts, ports, paths, refs, and DNS answers are validated; redirects are disabled.
@@ -128,8 +128,10 @@ Stop PostgreSQL with `bun run db:down`.
 - The shared `crates/queue` uses `FOR UPDATE SKIP LOCKED`, commits claims before processing, and enforces worker leases, heartbeats, fencing, bounded exponential retries, and stale-lease recovery.
 - Ordered `job_events` drive SSE. `Last-Event-ID`/`after` replay is implemented, with `follow=false` for a finite replay stream and safe `stream.error` events on database failure.
 - The scheduler owns a PostgreSQL pool, reports database-aware readiness, promotes due scheduled runs to queued, and recovers expired job leases. Due-run claim logic is implemented and tested for the future execution dispatcher.
-- Repository analysis output is not yet consumed by Pi. Plans, approvals, targets, execution, and reports are still absent (Phases 6-13). The analysis worker's HTTP surface remains health-only.
-- The web app still shows the Phase 3 project workspace; a job creation/status UI is deferred to Phase 6+.
+- Pi planning is implemented as an analysis-worker library (`services/analysis-worker/src/agent/`) with a constrained read-only/proposal tool registry, strict v1 validation, deterministic fallback, and a narrow PostgreSQL plan writer. It consumes the Phase 5 snapshot and Phase 6 inventory, but it is not yet wired to the job queue or exposed by an HTTP endpoint. The worker HTTP surface remains health-only.
+- The planner can persist draft `test_plans`, `planned_tests`, `agent_sessions`, and audit records when a caller supplies a `PostgresPlanStore`. There is no authenticated planning API, plan review UI, approval endpoint, target authorization, execution, or reporting yet (Phases 8-13).
+- The vetted catalog is still empty, so a vulnerability-testing fallback cannot be produced until Phase 8 adds catalog entries. Load fallback is limited to sorted literal `GET`/`HEAD` routes and a conservative baseline profile.
+- The web app still shows the Phase 3 project workspace; job creation/status and plan review UI work is deferred to Phase 8+.
 - Versioned v1 contracts now include `job.claimed` and `job.retry_scheduled` events; catalog tests remain empty but validated.
 - All services bind to loopback by default.
 

@@ -171,28 +171,36 @@ Legend: `[x]` done with evidence - `[ ]` not done.
 
 ## Phase 7 — Pi agent integration and plan generation
 
-**Status:** Not started
+**Status:** Complete
 
 **Tasks**
 
-- [ ] Integrate the Pi SDK in the analysis worker
-- [ ] Define a constrained tool registry: repository inspection, route discovery, schema/auth inspection, catalog listing, plan proposal, plan validation, and plan persistence
-- [ ] Do not give Pi unrestricted shell access or direct database write credentials
-- [ ] Supply job goal, intensity, repository snapshot, catalog entries, and policy constraints
-- [ ] Validate output with a strict versioned schema
-- [ ] Bound tokens, iterations, wall time, tool output size, and retries
-- [ ] Record model/provider metadata without storing secrets
-- [ ] Add fallback behavior for malformed or unavailable model output
-- [ ] Make plan generation idempotent or version-aware
-- [ ] Include explicit user input requests for missing information
+- [x] Integrate the Pi SDK in the analysis worker
+- [x] Define a constrained tool registry: repository inspection, route discovery, schema/auth inspection, catalog listing, plan proposal, plan validation, and plan persistence
+- [x] Do not give Pi unrestricted shell access or direct database write credentials
+- [x] Supply job goal, intensity, repository snapshot, catalog entries, and policy constraints
+- [x] Validate output with a strict versioned schema
+- [x] Bound tokens, iterations, wall time, tool output size, and retries
+- [x] Record model/provider metadata without storing secrets
+- [x] Add fallback behavior for malformed or unavailable model output
+- [x] Make plan generation idempotent or version-aware
+- [x] Include explicit user input requests for missing information
 
 **Exit gate**
 
-- [ ] A mocked/model-fixture integration test creates a valid plan
-- [ ] Invalid or malicious tool arguments are rejected
-- [ ] Model outages leave the job recoverable
-- [ ] Repository prompt injection cannot grant new tools or alter server-side policy
-- [ ] No proposed tests are executed in this phase
+- [x] A mocked/model-fixture integration test creates a valid plan
+- [x] Invalid or malicious tool arguments are rejected
+- [x] Model outages leave the job recoverable
+- [x] Repository prompt injection cannot grant new tools or alter server-side policy
+- [x] No proposed tests are executed in this phase
+
+**Evidence**
+
+- Library: `services/analysis-worker/src/agent/`
+- Integration tests: `bun test src/agent` (43 pass, 6 skipped without a test DB)
+- Database integration: `bun test src/agent/postgres-store.integration.test.ts` with a command-scoped `PROBE_FORGE_TEST_DATABASE_URL` (4 pass)
+- Full checks: `bun run check` (PASS)
+- Report: `docs/phases/07_planning_report.md`; design: `docs/PLANNING.md`
 
 ## Phase 8 — Test catalog and plan approval UI
 
