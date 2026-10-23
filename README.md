@@ -11,12 +11,12 @@ The AI agent (Pi) inspects a pinned commit of the user's repository and proposes
 
 ## Status
 
-**Phase 5 — read-only Git ingestion: complete.** See the [phase report](docs/phases/05_git_ingestion_report.md).
+**Phase 6 — static discovery and application model: complete.** See the [phase report](docs/phases/06_static_discovery_report.md).
 
-- Next permitted phase: **Phase 6 — static discovery and application model** (starts only after explicit authorization).
+- Next permitted phase: **Phase 7 — Pi agent integration and plan generation** (starts only after explicit authorization).
 - Phase tasks and exit gates: [docs/IMPLEMENTATION_CHECKLIST.md](docs/IMPLEMENTATION_CHECKLIST.md)
 - Decisions, interpretations, and open questions: [docs/DECISION_LOG.md](docs/DECISION_LOG.md)
-- Contract details: [docs/CONTRACTS.md](docs/CONTRACTS.md) · Database details: [docs/DATABASE.md](docs/DATABASE.md) · Authentication and RBAC: [docs/AUTH.md](docs/AUTH.md) · Jobs and queue: [docs/JOBS.md](docs/JOBS.md) · Read-only ingestion: [docs/REPOSITORY_INGESTION.md](docs/REPOSITORY_INGESTION.md)
+- Contract details: [docs/CONTRACTS.md](docs/CONTRACTS.md) · Database details: [docs/DATABASE.md](docs/DATABASE.md) · Authentication and RBAC: [docs/AUTH.md](docs/AUTH.md) · Jobs and queue: [docs/JOBS.md](docs/JOBS.md) · Read-only ingestion: [docs/REPOSITORY_INGESTION.md](docs/REPOSITORY_INGESTION.md) · Static discovery: [docs/DISCOVERY.md](docs/DISCOVERY.md)
 - Phase reports: [docs/phases/](docs/phases/)
 
 ## Architecture at a glance
@@ -49,7 +49,7 @@ Boundaries that must not be crossed:
 ```text
 apps/web/                  React 19 + TypeScript + Vite 8 + Tailwind 4 dashboard
 services/api/              Rust + Axum control plane (auth, projects/RBAC, jobs/SSE, readiness)
-services/analysis-worker/  Bun + TypeScript worker (health endpoints, read-only ingestion CLI)
+services/analysis-worker/  Bun + TypeScript worker (health, read-only ingestion, static discovery)
 services/execution-worker/ Rust execution-worker skeleton (health endpoints)
 services/scheduler/        Rust scheduler skeleton (health endpoints)
 crates/contracts/          Rust contract types, validation, and shared-fixture tests

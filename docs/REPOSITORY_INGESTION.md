@@ -205,7 +205,11 @@ It never prints credentials, remote URLs from Git errors, absolute workspace
 paths, or stack traces. Use `--max-files`, `--max-total-bytes`,
 `--max-file-bytes`, `--max-depth`, `--max-workspace-bytes`,
 `--max-inventory-files`, `--max-dependencies-per-manifest`, and
-`--git-timeout-ms` to tighten limits further.
+`--git-timeout-ms` to tighten limits further. Add `--discovery-output <file>`
+to run the Phase 6 static discovery layer against the same pinned workspace and
+write a bounded application inventory; see
+[DISCOVERY.md](DISCOVERY.md). Discovery is optional and is never performed by
+the ingestion library automatically.
 
 ## Audit events
 
@@ -238,13 +242,21 @@ oversized files, and binary files without contacting a network.
 All tests use local inert fixtures and local processes. No real repository,
 scanner, load generator, or external target is contacted.
 
+Phase 6 builds on this boundary with deterministic static discovery. It reads
+the bounded `RepositorySession`, never starts a second Git process, and never
+executes repository code. See [DISCOVERY.md](DISCOVERY.md) for the inventory
+model, parsers, limits, and Pi toolset. The optional CLI `--discovery-output`
+writes that inventory beside the Phase 5 snapshot.
+
 ## Deferred follow-ups
 
-- Persist snapshots and audit events to PostgreSQL and connect the analysis
-  worker to the durable job queue.
+- Persist snapshots, inventories, and audit events to PostgreSQL and connect the
+  analysis worker to the durable job queue.
 - Add an authenticated, authorized control-plane endpoint that requests
   ingestion; do not expose the operator CLI as a network service.
 - Add a network-egress policy or address-pinned Git transport for stronger
   DNS-rebinding resistance.
 - Decide how to manage known SSH host keys and encrypted SSH keys.
+- Wire the Phase 6 discovery toolset to Pi in Phase 7 with token and output
+  budgets; do not expose it as an unrestricted file or shell tool.
 - Add source parsing and route discovery in Phase 6.

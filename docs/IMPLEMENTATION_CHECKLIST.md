@@ -150,24 +150,24 @@ Legend: `[x]` done with evidence - `[ ]` not done.
 
 ## Phase 6 — Static discovery and application model
 
-**Status:** Not started
+**Status:** Complete
 
 **Tasks**
 
-- [ ] Implement deterministic scanners/parsers for supported languages and frameworks incrementally
-- [ ] Extract routes, HTTP methods, middleware, schema validators, auth checks, configuration patterns, dependencies, outbound requests, and file uploads where possible
-- [ ] Store findings with file paths, line ranges, and confidence
-- [ ] Track unsupported languages/frameworks explicitly instead of inventing coverage
-- [ ] Provide discovery tools to Pi with structured, size-bounded results
-- [ ] Treat repository content as untrusted input and isolate it from system/tool instructions
-- [ ] Add tests using synthetic repositories and expected route inventories
+- [x] Implement deterministic scanners/parsers for supported languages and frameworks incrementally
+- [x] Extract routes, HTTP methods, middleware, schema validators, auth checks, configuration patterns, dependencies, outbound requests, and file uploads where possible
+- [x] Store findings with file paths, line ranges, and confidence
+- [x] Track unsupported languages/frameworks explicitly instead of inventing coverage
+- [x] Provide discovery tools to Pi with structured, size-bounded results
+- [x] Treat repository content as untrusted input and isolate it from system/tool instructions
+- [x] Add tests using synthetic repositories and expected route inventories
 
 **Exit gate**
 
-- [ ] The system produces a structured application inventory from fixture repositories
-- [ ] Each discovered fact includes provenance or is marked as inferred
-- [ ] Unsupported or ambiguous routes are identified as such
-- [ ] No repository code is executed
+- [x] The system produces a structured application inventory from fixture repositories
+- [x] Each discovered fact includes provenance or is marked as inferred
+- [x] Unsupported or ambiguous routes are identified as such
+- [x] No repository code is executed
 
 ## Phase 7 — Pi agent integration and plan generation
 

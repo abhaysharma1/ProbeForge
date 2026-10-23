@@ -251,6 +251,17 @@ Format per decision: status, context, decision, rationale, alternatives, impact.
 - **Alternatives:** Accept arbitrary hosts/schemes (rejected); use the ambient SSH agent (rejected); store plaintext credentials in the URL (rejected); support only public HTTPS (simpler but would not exercise the SSH job contract).
 - **Impact:** SSH deployments must inject an unencrypted key and preconfigure host-key trust outside this phase. DNS rebinding remains a residual risk because the Git CLI resolves again; a later egress policy or address-pinned transport should close it. See `docs/REPOSITORY_INGESTION.md`.
 
+### D-027 - Phase 6 discovery is a bounded library and optional CLI inventory
+
+- **Date:** 2026-10-23
+- **Status:** Accepted (Phase 6 scope)
+- **Context:** Phase 6 must produce a structured application model and Pi-facing discovery tools without creating an unauthenticated repository-analysis endpoint or inventing persistence/authorization contracts ahead of the worker dispatcher. Repository source is untrusted and scanners must remain deterministic and read-only.
+- **Decision:** Implement discovery as a typed analysis-worker library that consumes only the existing `RepositorySession` and returns a separate, versioned `ApplicationInventory`. Keep the Phase 5 snapshot unchanged. Add an optional `--discovery-output` operator CLI artifact. Expose a pure, bounded query toolset (`summary`, `routes`, `route`, `surfaces`, `unsupported`) for Phase 7 to adapt to Pi. Treat all source as data, attach provenance/confidence/evidence, mark dynamic or unknown routes ambiguous, and report unsupported languages/frameworks. Do not persist inventories or add an HTTP endpoint in this phase.
+- **Rationale:** This satisfies discovery without widening the network or authorization surface, preserves the immutable snapshot boundary, and keeps inventory size and future Pi context bounded. Deterministic parsers are honest about heuristic coverage rather than pretending to execute framework semantics.
+- **Alternatives:** Add an HTTP discovery endpoint (rejected until authenticated worker dispatch exists); persist inventories immediately (no job/snapshot ownership contract yet); use an LLM to parse source (nondeterministic and violates the phase's deterministic scanner requirement); expose unrestricted file reads to Pi (rejected; typed query results only).
+- **Impact:** Phase 7 must wire the toolset to Pi, define model-facing schemas/token budgets, and decide how inventories accompany claimed jobs. Frame parsers are line-oriented and intentionally incomplete; `docs/DISCOVERY.md` records supported frameworks and limitations. JAX-RS and browser/UI frameworks remain explicitly unsupported.
+
+
 ## Open questions
 
 | ID | Question | Needed by | Notes |

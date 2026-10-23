@@ -153,6 +153,7 @@ const LANGUAGE_BY_FILENAME: Readonly<Record<string, string>> = {
 
 const FRAMEWORK_BY_DEPENDENCY: Readonly<Record<string, string>> = {
   "@angular/core": "Angular",
+  "@hono/node-server": "Hono",
   "@nestjs/core": "NestJS",
   "@remix-run/react": "Remix",
   "actix-web": "Actix Web",
@@ -167,8 +168,10 @@ const FRAMEWORK_BY_DEPENDENCY: Readonly<Record<string, string>> = {
   "github.com/gin-gonic/gin": "Gin",
   "github.com/gofiber/fiber/v2": "Fiber",
   "github.com/labstack/echo/v4": "Echo",
+  hono: "Hono",
   koa: "Koa",
   "laravel/framework": "Laravel",
+  "microsoft.aspnetcore.openapi": "ASP.NET Core",
   next: "Next.js",
   nuxt: "Nuxt",
   rails: "Ruby on Rails",
@@ -177,6 +180,7 @@ const FRAMEWORK_BY_DEPENDENCY: Readonly<Record<string, string>> = {
   rocket: "Rocket",
   sinatra: "Sinatra",
   "spring-boot-starter-web": "Spring Boot",
+  starlette: "Starlette",
   svelte: "Svelte",
   "symfony/framework-bundle": "Symfony",
   tonic: "Tonic",

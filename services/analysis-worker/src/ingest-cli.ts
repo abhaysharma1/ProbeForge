@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { loadConfig, WorkerConfigError } from "./config";
+import { discoverApplication } from "./discovery";
 import { JsonLineAuditSink } from "./repository/audit";
 import { RepositoryIngestError } from "./repository/errors";
 import { validateGitUrl } from "./repository/git-url";
@@ -22,6 +23,7 @@ Options:
   --credential-ref <ref>   Secret reference, e.g. secret://git/github
   --audit-log <file>       Append-only JSONL audit log (required unless configured)
   --output <file>          Write snapshot JSON to a file instead of stdout
+  --discovery-output <file> Write bounded static application inventory JSON
   --max-files <n>          Maximum tracked file entries
   --max-total-bytes <n>    Maximum tracked blob bytes
   --max-file-bytes <n>     Maximum bytes read from one file
@@ -45,6 +47,7 @@ interface CliOptions {
   readonly credentialRef: string | null;
   readonly auditLog: string | null;
   readonly output: string | null;
+  readonly discoveryOutput: string | null;
   readonly limits: Partial<IngestionLimits>;
 }
 
@@ -106,6 +109,7 @@ function parseArgs(argv: readonly string[]): CliOptions | "help" {
     "credential-ref",
     "audit-log",
     "output",
+    "discovery-output",
     ...limitFlags.map(([, flag]) => flag),
   ]);
   for (const key of values.keys()) {
@@ -119,6 +123,10 @@ function parseArgs(argv: readonly string[]): CliOptions | "help" {
     credentialRef: values.get("credential-ref") ?? null,
     auditLog: values.get("audit-log") ?? null,
     output: values.get("output") === undefined ? null : resolve(values.get("output") ?? ""),
+    discoveryOutput:
+      values.get("discovery-output") === undefined
+        ? null
+        : resolve(values.get("discovery-output") ?? ""),
     limits,
   };
 }
@@ -171,6 +179,10 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       },
       async (session) => {
         await writeSnapshot(parsed.output, session.snapshot);
+        if (parsed.discoveryOutput !== null) {
+          const inventory = await discoverApplication(session);
+          await writeSnapshot(parsed.discoveryOutput, inventory);
+        }
       },
     );
     return 0;

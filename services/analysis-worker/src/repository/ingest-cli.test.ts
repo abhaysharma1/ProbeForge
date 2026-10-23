@@ -20,6 +20,7 @@ describe("ingest CLI", () => {
     const repo = await createFixtureRepository();
     const auditLog = join(repo.tempRoot, "audit.jsonl");
     const output = join(repo.tempRoot, "snapshot.json");
+    const discoveryOutput = join(repo.tempRoot, "inventory.json");
     try {
       const result = runCli([
         "--fixture",
@@ -30,6 +31,8 @@ describe("ingest CLI", () => {
         auditLog,
         "--output",
         output,
+        "--discovery-output",
+        discoveryOutput,
       ]);
       expect(result.exitCode).toBe(0);
       const snapshot = JSON.parse(await readFile(output, "utf8")) as {
@@ -40,6 +43,20 @@ describe("ingest CLI", () => {
       expect(snapshot.commitSha).toMatch(/^[0-9a-f]{40}$/);
       expect(snapshot.analysisMetadata?.executedRepositoryCode).toBe(false);
       expect(snapshot.files?.length).toBeGreaterThan(0);
+      const inventory = JSON.parse(await readFile(discoveryOutput, "utf8")) as {
+        commitSha?: string;
+        executedRepositoryCode?: boolean;
+        routes?: Array<{ method?: string; path?: string; framework?: string }>;
+        coverage?: { examinedFiles?: number };
+      };
+      expect(inventory.commitSha).toBe(snapshot.commitSha);
+      expect(inventory.executedRepositoryCode).toBe(false);
+      expect(inventory.coverage?.examinedFiles).toBeGreaterThan(0);
+      expect(inventory.routes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ method: "GET", path: "/fixture", framework: "FastAPI" }),
+        ]),
+      );
       const events = (await readFile(auditLog, "utf8"))
         .trim()
         .split("\n")
@@ -53,6 +70,7 @@ describe("ingest CLI", () => {
       );
     } finally {
       await rm(output, { force: true });
+      await rm(discoveryOutput, { force: true });
       await repo.cleanup();
     }
   }, 30_000);
