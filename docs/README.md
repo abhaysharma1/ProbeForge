@@ -33,6 +33,7 @@ Do not resolve a genuine conflict silently. Choose the safest minimal interpreta
 | Phase | Report |
 |---|---|
 | 0 | [00_recon_report.md](phases/00_recon_report.md) |
+| 1 | [01_monorepo_report.md](phases/01_monorepo_report.md) |
 
 ## Conventions
 

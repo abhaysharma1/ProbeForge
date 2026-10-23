@@ -1,0 +1,35 @@
+{
+  "name": "probe-forge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.4.4",
+  "engines": {
+    "bun": ">=1.4.4"
+  },
+  "workspaces": [
+    "apps/*",
+    "services/analysis-worker",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "bun scripts/services.mjs start",
+    "check": "bun run check:docs && bun run check:rust && bun run check:ts",
+    "check:docs": "bun scripts/check-docs.mjs",
+    "check:rust": "cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace",
+    "check:ts": "bun run lint && bun run typecheck && bun run test:ts",
+    "check:services": "bun scripts/services.mjs check",
+    "lint": "biome check .",
+    "typecheck": "bun run --filter '*' typecheck",
+    "test:ts": "bun run --filter '*' test",
+    "format": "biome format --write . && cargo fmt --all",
+    "build": "bun run build:rust && bun run build:web",
+    "build:rust": "cargo build --workspace",
+    "build:web": "bun run --cwd apps/web build",
+    "db:up": "docker compose -f infra/local/compose.yaml up -d --wait",
+    "db:down": "docker compose -f infra/local/compose.yaml down"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.2"
+  }
+}

@@ -33,25 +33,25 @@ Legend: `[x]` done with evidence - `[ ]` not done.
 
 ## Phase 1 — Monorepo skeleton and local development
 
-**Status:** Not started
+**Status:** Done - [report](phases/01_monorepo_report.md)
 
 **Tasks**
 
-- [ ] Create the monorepo structure: `apps/web`, `services/api`, `services/analysis-worker`, `services/execution-worker`, `services/scheduler`, `packages/contracts`, `packages/test-catalog`, `infra/local`, `docs`
-- [ ] Initialize the React/TypeScript frontend and the Rust/Axum backend
-- [ ] Initialize the TypeScript analysis worker with the Pi SDK (runtime pinned: Bun or Node.js LTS per D-004)
-- [ ] Add PostgreSQL for local development using a reproducible Compose file
-- [ ] Add environment variable examples containing placeholders only
-- [ ] Add health endpoints and graceful shutdown for each service
-- [ ] Add a root command interface for lint, format, test, and local startup
-- [ ] Pin supported runtime and tool versions
+- [x] Create the monorepo structure: `apps/web`, `services/api`, `services/analysis-worker`, `services/execution-worker`, `services/scheduler`, `packages/contracts`, `packages/test-catalog`, `infra/local`, `docs`
+- [x] Initialize the React/TypeScript frontend and the Rust/Axum backend
+- [x] Initialize the TypeScript analysis worker with the Pi SDK (Bun 1.4.4, per D-004/D-007)
+- [x] Add PostgreSQL for local development using a reproducible Compose file
+- [x] Add environment variable examples containing placeholders only
+- [x] Add health endpoints and graceful shutdown for each service
+- [x] Add a root command interface for lint, format, test, and local startup
+- [x] Pin supported runtime and tool versions
 
 **Exit gate**
 
-- [ ] A clean checkout can install/build the platform's own dependencies
-- [ ] Services start locally and health checks work
-- [ ] No service contains project-specific credentials
-- [ ] CI or documented local checks pass
+- [x] A clean checkout can install/build the platform's own dependencies (`bun install --frozen-lockfile`, `cargo build --locked`)
+- [x] Services start locally and health checks work (`bun run check:services`: 5/5)
+- [x] No service contains project-specific credentials (placeholders only; contract check passes)
+- [x] CI or documented local checks pass (`bun run check`; no remote yet, see D-011)
 
 ## Phase 2 — Contracts, configuration, and database migrations
 

@@ -2,7 +2,7 @@ ProbeForge — Agent Engineering Best Practices
 All the documentation files are located in  docs/
 This file defines the working rules for coding agents and human contributors. Follow it alongside the five numbered ProbeForge project documents. If instructions conflict, preserve security and data integrity first, then follow the phase gates in 03_phase_by_phase_implementation_plan.md; document the conflict instead of silently choosing a risky interpretation.
 
-Implementation tracking: `docs/IMPLEMENTATION_CHECKLIST.md` · Decisions: `docs/DECISION_LOG.md` · Phase reports: `docs/phases/` · Contract check: `node scripts/check-docs.mjs`
+Implementation tracking: `docs/IMPLEMENTATION_CHECKLIST.md` · Decisions: `docs/DECISION_LOG.md` · Phase reports: `docs/phases/` · Contract check: `bun scripts/check-docs.mjs`
 1. Start with context, then make a small plan
 - Read 01_what_we_are_developing.md through 05_starting_prompt.md before implementation.
 - Inspect the existing repository before assuming files, frameworks, scripts, or architecture exist.

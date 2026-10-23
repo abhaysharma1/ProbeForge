@@ -1,10 +1,11 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // ProbeForge repository contract check.
 //
-// Validates the documentation contract only: required files, internal links,
-// phase coverage, environment-file hygiene, and high-signal secret patterns.
+// Validates the repository contract: required files, internal links, phase
+// coverage, environment-file hygiene, and high-signal secret patterns.
 // Uses Node.js built-ins only, so it runs without installing dependencies.
 
+import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,7 +21,14 @@ const REQUIRED_FILES = [
   ".gitignore",
   ".gitattributes",
   ".editorconfig",
+  ".env.example",
+  ".nvmrc",
   "Agents.md",
+  "package.json",
+  "tsconfig.base.json",
+  "biome.json",
+  "Cargo.toml",
+  "rust-toolchain.toml",
   "docs/README.md",
   "docs/IMPLEMENTATION_CHECKLIST.md",
   "docs/DECISION_LOG.md",
@@ -30,6 +38,13 @@ const REQUIRED_FILES = [
   "docs/04_tech_stack.md",
   "docs/05_starting_prompt.md",
   "docs/phases/00_recon_report.md",
+  "docs/phases/01_monorepo_report.md",
+  "infra/local/compose.yaml",
+  "scripts/services.mjs",
+  "apps/web/package.json",
+  "services/analysis-worker/package.json",
+  "packages/contracts/package.json",
+  "packages/test-catalog/package.json",
 ];
 
 const LINKED_DOCS = ["README.md", "docs/README.md", "docs/IMPLEMENTATION_CHECKLIST.md"];
@@ -86,11 +101,38 @@ if (existsSync(abs("docs/IMPLEMENTATION_CHECKLIST.md"))) {
   if (duplicates.length) fail(`checklist has duplicate phases: ${duplicates.join(", ")}`);
 }
 
-// 4. Environment-file hygiene.
-const envFiles = readdirSync(root).filter(
-  (name) => name === ".env" || (name.startsWith(".env.") && name !== ".env.example"),
-);
-for (const name of envFiles) fail(`real environment file must not be committed: ${name}`);
+// 4. Environment-file hygiene: a real .env must never be tracked by git.
+function trackedPaths() {
+  try {
+    return execFileSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8" })
+      .split("\0")
+      .filter(Boolean);
+  } catch {
+    return null;
+  }
+}
+
+const tracked = trackedPaths();
+let committedEnvViolations = 0;
+
+if (tracked !== null) {
+  for (const path of tracked) {
+    const name = path.split("/").pop();
+    if (name === ".env" || (name?.startsWith(".env.") && name !== ".env.example")) {
+      fail(`real environment file is tracked by git: ${path}`);
+      committedEnvViolations += 1;
+    }
+  }
+} else {
+  // No git repository available: fall back to checking the working tree.
+  for (const name of readdirSync(root)) {
+    if (name === ".env" || (name.startsWith(".env.") && name !== ".env.example")) {
+      fail(`real environment file must not be committed: ${name}`);
+      committedEnvViolations += 1;
+    }
+  }
+}
+
 if (existsSync(abs(".gitignore"))) {
   const rules = read(".gitignore").split(/\r?\n/);
   for (const rule of [".env", "!.env.example"]) {
@@ -120,7 +162,11 @@ console.log("ProbeForge repository contract check");
 console.log(`- required files: ${presentFiles}/${REQUIRED_FILES.length} present`);
 console.log(`- internal links: ${linkedDocs} document(s) checked`);
 console.log(`- checklist phases: ${phaseCount} heading(s) found (expected 16: Phase 0-15)`);
-console.log(`- environment hygiene: ${envFiles.length === 0 ? "no real .env files" : "violations found"}`);
+console.log(
+  `- environment hygiene: ${
+    committedEnvViolations === 0 ? "no tracked .env files" : "violations found"
+  }`,
+);
 console.log("- secret scan: completed");
 
 if (failures.length > 0) {

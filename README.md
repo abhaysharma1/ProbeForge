@@ -11,11 +11,9 @@ The AI agent (Pi) inspects a pinned commit of the user's repository and proposes
 
 ## Status
 
-**Phase 0 — repository reconnaissance and implementation contract: complete.**
+**Phase 1 — monorepo skeleton and local development: complete.** See the [phase report](docs/phases/01_monorepo_report.md).
 
-This repository currently contains documentation and a repository contract only. There is no product code, no build, and no service to run yet.
-
-- Next permitted phase: **Phase 1 — Monorepo skeleton and local development** (starts only after explicit authorization).
+- Next permitted phase: **Phase 2 — contracts, configuration, and database migrations** (starts only after explicit authorization).
 - Phase tasks and exit gates: [docs/IMPLEMENTATION_CHECKLIST.md](docs/IMPLEMENTATION_CHECKLIST.md)
 - Decisions, interpretations, and open questions: [docs/DECISION_LOG.md](docs/DECISION_LOG.md)
 - Phase reports: [docs/phases/](docs/phases/)
@@ -45,47 +43,78 @@ Boundaries that must not be crossed:
 - Execution happens only after persisted approval and target authorization, with hard budgets and cancellation that stops work.
 - Security execution and load generation are isolated from the control plane by process and resource boundaries.
 
-## Planned repository layout (Phase 1)
+## Repository layout
 
 ```text
-apps/web/                  React + TypeScript + Vite dashboard
-services/api/              Rust + Axum control plane
-services/analysis-worker/  TypeScript + Pi SDK planning worker
-services/execution-worker/ security adapters and constrained load runner
-services/scheduler/        durable due-run dispatcher
-packages/contracts/        shared versioned API/event/plan contracts
-packages/test-catalog/     versioned catalog of supported tests
-infra/local/               Docker Compose for PostgreSQL and local support
-docs/                      normative project documents and phase reports
+apps/web/                  React 19 + TypeScript + Vite 8 + Tailwind 4 dashboard
+services/api/              Rust + Axum control plane (health endpoints)
+services/analysis-worker/  Bun + TypeScript + Pi SDK worker (health endpoints)
+services/execution-worker/ Rust execution-worker skeleton (health endpoints)
+services/scheduler/        Rust scheduler skeleton (health endpoints)
+packages/contracts/        Shared job-goal, service-name, and health contracts
+packages/test-catalog/     Versioned, non-executable test catalog scaffold
+infra/local/               Docker Compose for local PostgreSQL
+scripts/                   Repository contract check and local service runner
+docs/                      Normative project documents and phase reports
 ```
 
-## Documentation
+## Prerequisites
 
-The five numbered documents in [docs/](docs/) are normative. If they conflict, preserve security and data integrity first, follow the phase gates in [03_phase_by_phase_implementation_plan.md](docs/03_phase_by_phase_implementation_plan.md), and record the interpretation in the [decision log](docs/DECISION_LOG.md) instead of silently choosing a risky reading. See [docs/README.md](docs/README.md) for the documentation index.
-
-## Documented checks
-
-The repository contract check is runnable today and requires only Node.js built-ins (no dependencies installed):
-
-| Area | Command | Status |
+| Tool | Version | Purpose |
 |---|---|---|
-| Documentation contract | `node scripts/check-docs.mjs` | Available now |
-| Rust formatting | `cargo fmt --all -- --check` | Wired in Phase 1 |
-| Rust lints | `cargo clippy --workspace --all-targets -- -D warnings` | Wired in Phase 1 |
-| Rust tests | `cargo test --workspace` | Wired in Phase 1 |
-| TypeScript type check | `<package manager> typecheck` | Wired in Phase 1 |
-| TypeScript lint/format | `<package manager> lint` / `format:check` | Wired in Phase 1 |
-| TypeScript tests | `<package manager> test` | Wired in Phase 1 |
-| Everything | single root entry command | Added in Phase 1 |
+| [Bun](https://bun.sh) | 1.4.4 | Product TypeScript runtime, workspace installs, repo scripts |
+| Rust (rustup) | 1.98.1 | Control plane and worker services; pinned in `rust-toolchain.toml` |
+| Docker Engine + Compose v2 | 29.x / v5.x | Local PostgreSQL only |
+| Node.js | 24.15.0 (`.nvmrc`) | Build tooling only (Vite/Vitest CLIs) |
+| Git | any recent | Version control |
 
-Package manager, worker runtime, and dependency versions are confirmed and pinned in Phase 1 (see decisions D-002, D-003, D-004, D-007). Floating `latest` tags are not allowed.
+No cloud resources, API keys, or model-provider credentials are required for local development or the documented checks.
 
-## Local development
+## Quick start
 
-- PostgreSQL runs locally through the reproducible Compose file in `infra/local/` (added in Phase 1).
-- No cloud resources or paid services are required or used during development.
-- Development tests use inert fixture repositories and local mock targets only: no real scans, no real load, no external traffic.
-- Installing the platform's own dependencies is allowed; installing dependencies from inspected repositories is never allowed.
+```bash
+bun install                     # install workspace dependencies (lockfile: bun.lock)
+cp .env.example .env            # PowerShell: Copy-Item .env.example .env
+# set POSTGRES_PASSWORD in .env to a local-only value
+bun run db:up                   # start PostgreSQL 18.6 (loopback only)
+bun run build:rust              # build the Rust workspace
+bun run dev                     # start all five local services
+```
+
+Local endpoints (loopback only):
+
+| Service | URL |
+|---|---|
+| Web dashboard | http://127.0.0.1:5173 |
+| API liveness / readiness | http://127.0.0.1:8080/healthz · `/readyz` |
+| Scheduler | http://127.0.0.1:8081/healthz · `/readyz` |
+| Execution worker | http://127.0.0.1:8082/healthz · `/readyz` |
+| Analysis worker | http://127.0.0.1:8090/healthz · `/readyz` |
+| PostgreSQL | `127.0.0.1:5432` (Compose) |
+
+Stop PostgreSQL with `bun run db:down`.
+
+## Checks
+
+| Command | What it verifies |
+|---|---|
+| `bun run check` | Documentation contract, Rust fmt/clippy/tests, TypeScript lint/typecheck/tests |
+| `bun run check:docs` | Required files, doc links, Phase 0-15 coverage, `.env` hygiene, secret patterns |
+| `bun run check:rust` | `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test --workspace` |
+| `bun run check:ts` | Biome lint, strict type checks, Bun/Vitest tests for all TS packages |
+| `bun run check:services` | Starts all five services, verifies health endpoints, stops them |
+| `bun run build` | Rust workspace build plus the production web build |
+| `bun run format` | Biome format (TS/JSON) and `cargo fmt` |
+
+`check:services` requires a prior `bun run build:rust` and free loopback ports. It never contacts external targets. CI is not configured yet; the documented local checks are the gate until a Git remote exists (decision D-011).
+
+## Phase 1 scope and current limitations
+
+- The API, scheduler, and execution worker expose health endpoints only. They do not connect to PostgreSQL yet (Phase 2 adds migrations and a pool).
+- The analysis worker serves health endpoints and pins the Pi SDK; the constrained planning session and tool registry arrive in Phase 7. No model calls or repository access exist yet.
+- The test catalog is intentionally empty but has a versioned schema and validation that rejects executable fields; catalog entries arrive in Phase 8.
+- No authentication, jobs, approvals, target validation, execution, or reporting exists yet (Phases 3-13).
+- All services bind to loopback by default.
 
 ## Security invariants
 
