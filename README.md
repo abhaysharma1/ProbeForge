@@ -81,14 +81,35 @@ No cloud resources, API keys, or model-provider credentials are required for loc
 ```bash
 bun install                     # install workspace dependencies (lockfile: bun.lock)
 cp .env.example .env            # PowerShell: Copy-Item .env.example .env
-# set POSTGRES_PASSWORD in .env to a local-only value
+# edit .env and set POSTGRES_PASSWORD to a local-only value
 bun run db:up                   # start PostgreSQL 18.6 (loopback only)
-# export DATABASE_URL with the same password (see .env.example)
-# PowerShell: $env:DATABASE_URL = "postgres://probeforge:<password>@127.0.0.1:5432/probeforge"
-bun run db:migrate              # apply the schema through migration 0011
-bun run user:create -- owner@example.test "Owner"   # prompts for the password
+bun run db:migrate              # apply the schema (loads DATABASE_URL from .env)
+bun run user:seed               # create the default local dev account (see below)
 bun run build:rust              # build the Rust workspace
-bun run dev                     # start all five local services (DATABASE_URL required)
+bun run dev                     # start all five local services
+```
+
+The `DATABASE_URL` and other `PROBE_FORGE_*` values are read from `.env`, which
+must match `POSTGRES_PASSWORD`. The `cargo`-based `bun run` scripts load it
+through `scripts/run-with-env.mjs`; `.env` is gitignored and must never be
+committed.
+
+### Default local account
+
+`bun run user:seed` creates (or refreshes) one development account, idempotently,
+from `.env`:
+
+| Field | Value |
+|---|---|
+| Email | `dev@probeforge.local` |
+| Password | `probeforge-dev-12345` |
+
+It refuses to run unless `PROBE_FORGE_ALLOW_DEV_SEED=true` is set (it is set in
+the sample `.env`), and it never prints the password. For a real account, use the
+terminal-prompting binary instead:
+
+```bash
+bun run user:create -- owner@example.test "Owner"   # prompts for the password
 ```
 
 Local endpoints (loopback only):
