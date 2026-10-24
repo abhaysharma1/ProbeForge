@@ -152,6 +152,163 @@ export interface JobPlan {
   readonly approval: PlanApprovalSummary | null;
 }
 
+export interface RunResultCounts {
+  readonly passed: number;
+  readonly failed: number;
+  readonly skipped: number;
+  readonly inconclusive: number;
+  readonly error: number;
+  readonly cancelled: number;
+  readonly confirmed: number;
+  readonly suspected: number;
+}
+
+export interface RunSummaryEntry {
+  readonly id: string;
+  readonly projectId: string;
+  readonly jobId: string;
+  readonly runType: JobGoal;
+  readonly status: string;
+  readonly planId: string;
+  readonly planVersion: number;
+  readonly startedAt: string | null;
+  readonly finishedAt: string | null;
+  readonly createdAt: string;
+  readonly resultCounts: RunResultCounts;
+  readonly reportStatus: string | null;
+}
+
+export interface EvidenceSummary {
+  readonly id: string;
+  readonly storageRef: string;
+  readonly sha256: string;
+  readonly mimeType: string;
+  readonly sizeBytes: number;
+  readonly redacted: boolean;
+  readonly retentionUntil: string | null;
+  readonly createdAt: string;
+}
+
+export interface TestResultView {
+  readonly id: string;
+  readonly catalogTestId: string;
+  readonly resultKey: string;
+  readonly outcome: string;
+  readonly findingStatus: string | null;
+  readonly severity: string | null;
+  readonly confidence: number | null;
+  readonly summary: string;
+  readonly details: Record<string, unknown>;
+  readonly observation: Record<string, unknown>;
+  readonly toolName: string | null;
+  readonly toolVersion: string | null;
+  readonly durationMs: number;
+  readonly createdAt: string;
+  readonly evidence: readonly EvidenceSummary[];
+}
+
+export interface RecommendationView {
+  readonly id: string;
+  readonly resultId: string | null;
+  readonly evidenceId: string | null;
+  readonly runMetricId: string | null;
+  readonly kind: string;
+  readonly severity: string;
+  readonly title: string;
+  readonly body: string;
+  readonly rationale: string | null;
+  readonly confidence: number | null;
+  readonly generatedBy: string;
+  readonly createdAt: string;
+}
+
+export interface RunMetricSummary {
+  readonly requestCount: number;
+  readonly errorCount: number;
+  readonly responseBytes: number;
+  readonly latencyP95Ms: number;
+  readonly throughputRps: number;
+}
+
+export interface RunScenarioProfile {
+  readonly id: string;
+  readonly name: string;
+  readonly virtualUsers: number | null;
+  readonly arrivalRatePerSecond: number | null;
+  readonly rampUpSeconds: number;
+  readonly durationSeconds: number;
+  readonly maxRequests: number;
+  readonly maxRequestsPerSecond: number;
+}
+
+export interface ReportVersionMeta {
+  readonly id: string;
+  readonly version: number;
+  readonly status: string;
+  readonly contentHash: string;
+  readonly summary: string;
+  readonly generatedBy: string;
+  readonly createdAt: string;
+}
+
+export interface ReportVersionContent extends ReportVersionMeta {
+  readonly content: Record<string, unknown>;
+}
+
+export interface RunReportView {
+  readonly id: string;
+  readonly runId: string;
+  readonly reportType: string;
+  readonly status: string;
+  readonly currentVersion: number;
+  readonly lastErrorCode: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly latest: ReportVersionContent | null;
+  readonly versions: readonly ReportVersionMeta[];
+}
+
+export interface RunDetail {
+  readonly run: RunSummaryEntry;
+  readonly reportType: string;
+  readonly target: {
+    readonly authorizationId: string;
+    readonly origin: string | null;
+  };
+  readonly scenario: RunScenarioProfile | null;
+  readonly results: readonly TestResultView[];
+  readonly recommendations: readonly RecommendationView[];
+  readonly metrics: RunMetricSummary;
+  readonly report: RunReportView | null;
+}
+
+export interface ComparisonSide {
+  readonly runId: string;
+  readonly runType: JobGoal;
+  readonly status: string;
+  readonly planVersion: number;
+  readonly scenarioId: string | null;
+  readonly scenarioName: string | null;
+  readonly targetOrigin: string | null;
+  readonly profile: RunScenarioProfile | null;
+  readonly startedAt: string | null;
+  readonly finishedAt: string | null;
+  readonly createdAt: string;
+  readonly resultCounts: RunResultCounts;
+  readonly metrics: RunMetricSummary;
+}
+
+export interface RunComparison {
+  readonly left: ComparisonSide;
+  readonly right: ComparisonSide;
+  readonly delta: {
+    readonly requestCount: number;
+    readonly errorCount: number;
+    readonly latencyP95Ms: number;
+    readonly throughputRps: number;
+  };
+}
+
 interface ErrorEnvelope {
   readonly error?: {
     readonly code?: string;
@@ -236,6 +393,28 @@ export function listJobs(projectId: string): Promise<Job[]> {
 
 export function getJobPlan(jobId: string): Promise<JobPlan> {
   return request<JobPlan>(`/jobs/${jobId}/plan`);
+}
+
+export function listRuns(projectId: string): Promise<RunSummaryEntry[]> {
+  return request<RunSummaryEntry[]>(`/projects/${projectId}/runs`);
+}
+
+export function getRun(runId: string): Promise<RunDetail> {
+  return request<RunDetail>(`/runs/${runId}`);
+}
+
+export function generateRunReport(runId: string, csrfToken: string): Promise<RunReportView> {
+  return unsafeRequest<RunReportView>("POST", `/runs/${runId}/report`, csrfToken);
+}
+
+export function compareRuns(runId: string, otherRunId: string): Promise<RunComparison> {
+  return request<RunComparison>(
+    `/runs/${runId}/compare?otherRunId=${encodeURIComponent(otherRunId)}`,
+  );
+}
+
+export function runReportExportPath(runId: string, format: "json" | "markdown"): string {
+  return `${API_BASE}/runs/${runId}/report/export?format=${format}`;
 }
 
 export function updatePlanSelection(

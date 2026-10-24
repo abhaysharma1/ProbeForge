@@ -1,14 +1,13 @@
 # Phase 13 report — Results, AI recommendations, and reports
 
-**Status:** PHASE 13: PASS (server-side)
+**Status:** PHASE 13: PASS
 
 **Date:** 2026-10-24
 
 **Scope:** Added durable run results, raw structured observations, traceable
 recommendations, immutable versioned reports, rerun comparison, recursive
-redaction, and JSON/Markdown export as authenticated JSON APIs with database
-tests. No model is called and no report content is logged. A dedicated web
-result page is deferred.
+redaction, JSON/Markdown export, and a web run-results view. No model is called
+and no report content is logged.
 
 ## What changed
 
@@ -40,6 +39,18 @@ result page is deferred.
 
 - New `docs/RESULTS_REPORTS.md`; decision D-034; checklist and index updates.
 
+### Web view (`apps/web`)
+
+- `RunReport.tsx` renders the run summary, per-test results with evidence
+  metadata, recommendations, load metrics, versioned report claims, and run
+  comparison.
+- `ProjectsView.tsx` lists a project's runs and opens the view; `api.ts` gains
+  the run/report/compare types and calls. Loading, empty, error,
+  permission-denied, and no-report states are explicit, and status is conveyed
+  with text, not color alone.
+- `App.test.tsx` covers opening a run and rendering traceable results, claims,
+  and the target origin.
+
 ## Exit gate evidence
 
 - **Every AI claim can be traced to stored evidence or is explicitly labeled a
@@ -67,7 +78,8 @@ Commands were run from `D:\Projects\ProbeForge` with a command-scoped local
 | `cargo test -p probe-forge-api --lib results` | PASS — 5 unit tests (redaction, traceability, Markdown, report type, hash). |
 | `DATABASE_URL=... cargo test -p probe-forge-api --test results_reports` | PASS — 4 integration tests. |
 | `bun run db:migrate` | PASS — migration `0013_results_reports` applied after `0012`. |
-| `CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 bun run check` | PASS — docs 80/80, 14 linked docs, 16 phase headings; fmt; clippy `-D warnings`; workspace tests (api lib 32, results_reports skipped without DB); Biome 148 files; typecheck; contracts 55, test-catalog 6, analysis-worker 113 pass / 7 skip / 586 assertions, web 9. |
+| `CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 bun run check` | PASS — docs 80/80, 14 linked docs, 16 phase headings; fmt; clippy `-D warnings`; workspace tests (api lib 32); Biome 149 files; typecheck; contracts 55, test-catalog 6, analysis-worker 113 pass / 7 skip / 586 assertions, web 10. |
+| `bun run --filter @probe-forge/web test` | PASS — 10 tests, including opening a run and rendering traceable results, claims, and the target origin. |
 | `DATABASE_URL=... bun run check:db` | PASS — api/auth/jobs/plans/targets (5), jobs (2), migrations (1), plan approval (6), results/reports (4), targets (5), queue/scheduler (8). |
 | `bun run check:services` | PASS — 5/5 healthy; ports 8080, 8081, 8082, 8090, and 5173 closed afterward. |
 | `git diff --check` | PASS — no whitespace errors. |
@@ -81,12 +93,10 @@ Failures observed and resolved during verification:
   `assert!`.
 - Docker Desktop was not running at the start of verification; it was started
   and the Postgres container was healthy before migration and DB checks.
+- Biome flagged formatting in the new web test; `biome check --write` fixed it.
 
 ## Known limitations
 
-- No web result page or run summary view yet; the data is available through the
-  authenticated JSON API. A dedicated UI is deferred until it can meet the
-  frontend design quality gate.
 - The execution worker does not yet write `test_results`, `evidence`, or
   `run_metrics` automatically; results are seeded by tests and will be produced
   by the Phase 15 end-to-end path.
@@ -96,6 +106,8 @@ Failures observed and resolved during verification:
 - Report content embeds a bounded, redacted observation but not the full
   `details` blob; the raw details remain in `test_results` and are redacted when
   returned through the run detail API.
+- The web view is read-only for results and only initiates report generation;
+  it does not create runs or schedules.
 - No real target or scan results are involved; all fixtures are inert.
 
 ## Next permitted phase

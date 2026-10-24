@@ -7,8 +7,9 @@ regenerated. No model is called: system recommendations are deterministic, and
 the same constrained shapes can accept a model later.
 
 > **Status:** results, recommendations, reports, comparison, redaction, and
-> export are implemented as authenticated JSON APIs with tests. A dedicated web
-> result page is deferred until it can meet the frontend design quality gate.
+> export are implemented as authenticated JSON APIs with tests, and the web app
+> renders a run summary, per-test results, evidence metadata, recommendations,
+> and report claims (project detail → Runs → View results).
 
 ## Data model
 
@@ -76,10 +77,16 @@ observed facts. Findings (`outcome = failed`) are separated from other checks
 profile, target origin, timestamps, outcome counts, and metric summary, plus
 request/error/latency/throughput deltas.
 
+## Web view
+
+`apps/web/src/RunReport.tsx` renders the run summary, per-test results,
+evidence metadata, recommendations, observed metrics, versioned report claims,
+and a run comparison. The project detail lists runs under **Runs** and opens the
+view with **View results**. Loading, empty, error, permission (viewer cannot
+generate), and no-report states are explicit.
+
 ## Limitations
 
-- There is no web result page or run summary view yet; the data is available
-  through the API.
 - The execution worker does not yet produce `test_results`, `evidence`, or
   `run_metrics` automatically; results are seeded by tests and will be written by
   the Phase 15 end-to-end path.

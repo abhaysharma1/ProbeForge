@@ -217,6 +217,140 @@ function approvedPlan(plan: JobPlan): JobPlan {
   };
 }
 
+const RUN = {
+  id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+  projectId: PROJECT.id,
+  jobId: JOB.id,
+  runType: "vulnerability_testing",
+  status: "completed",
+  planId: PLAN.id,
+  planVersion: 1,
+  startedAt: "2026-10-21T11:00:00Z",
+  finishedAt: "2026-10-21T11:02:00Z",
+  createdAt: "2026-10-21T11:00:00Z",
+  resultCounts: {
+    passed: 1,
+    failed: 1,
+    skipped: 0,
+    inconclusive: 0,
+    error: 0,
+    cancelled: 0,
+    confirmed: 1,
+    suspected: 0,
+  },
+  reportStatus: "final",
+};
+
+const RESULT_ID = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+const EVIDENCE_ID = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+
+const RUN_DETAIL = {
+  run: RUN,
+  reportType: "security",
+  target: {
+    authorizationId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    origin: "https://inert.example.test",
+  },
+  scenario: null,
+  results: [
+    {
+      id: RESULT_ID,
+      catalogTestId: "http.headers.missing",
+      resultKey: "result-1",
+      outcome: "failed",
+      findingStatus: "confirmed",
+      severity: "medium",
+      confidence: 0.8,
+      summary: "Missing security header observed.",
+      details: {},
+      observation: { observed: "x-content-type-options absent" },
+      toolName: "http_probe",
+      toolVersion: "0.1.0",
+      durationMs: 5,
+      createdAt: "2026-10-21T11:01:00Z",
+      evidence: [
+        {
+          id: EVIDENCE_ID,
+          storageRef: "evidence/1",
+          sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+          mimeType: "text/plain",
+          sizeBytes: 10,
+          redacted: true,
+          retentionUntil: null,
+          createdAt: "2026-10-21T11:01:00Z",
+        },
+      ],
+    },
+  ],
+  recommendations: [
+    {
+      id: "11111111-2222-4333-8444-555555555555",
+      resultId: RESULT_ID,
+      evidenceId: null,
+      runMetricId: null,
+      kind: "observed",
+      severity: "medium",
+      title: "Review finding http.headers.missing",
+      body: "Missing security header observed.",
+      rationale: null,
+      confidence: 0.8,
+      generatedBy: "system",
+      createdAt: "2026-10-21T11:03:00Z",
+    },
+  ],
+  metrics: {
+    requestCount: 0,
+    errorCount: 0,
+    responseBytes: 0,
+    latencyP95Ms: 0,
+    throughputRps: 0,
+  },
+  report: {
+    id: "aaaa1111-1111-4111-8111-111111111111",
+    runId: RUN.id,
+    reportType: "security",
+    status: "final",
+    currentVersion: 1,
+    lastErrorCode: null,
+    createdAt: "2026-10-21T11:03:00Z",
+    updatedAt: "2026-10-21T11:03:00Z",
+    latest: {
+      id: "bbbb2222-2222-4222-8222-222222222222",
+      version: 1,
+      status: "final",
+      contentHash: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+      summary: "Security run completed: 1 confirmed.",
+      generatedBy: "system",
+      createdAt: "2026-10-21T11:03:00Z",
+      content: {
+        claims: [
+          {
+            claimKind: "observed",
+            text: "Missing security header observed.",
+            references: { resultIds: [RESULT_ID], evidenceIds: [EVIDENCE_ID], metricIds: [] },
+          },
+          {
+            claimKind: "hypothesis",
+            text: "Latency may reflect target capacity.",
+            references: { resultIds: [], evidenceIds: [], metricIds: [] },
+          },
+        ],
+      },
+    },
+    versions: [
+      {
+        id: "bbbb2222-2222-4222-8222-222222222222",
+        version: 1,
+        status: "final",
+        contentHash: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+        summary: "Security run completed: 1 confirmed.",
+        generatedBy: "system",
+        createdAt: "2026-10-21T11:03:00Z",
+      },
+    ],
+  },
+};
+
 function mockResponse(body: unknown, status = 200) {
   return {
     ok: status >= 200 && status < 300,
@@ -234,6 +368,8 @@ interface FetchOptions {
   readonly plan?: JobPlan;
   readonly planPatchStatus?: number;
   readonly planApproveStatus?: number;
+  readonly runs?: readonly unknown[];
+  readonly runDetail?: unknown;
 }
 
 function installFetch(options: FetchOptions) {
@@ -284,6 +420,21 @@ function installFetch(options: FetchOptions) {
 
     if (url.includes("/api/projects/") && url.endsWith("/jobs") && method === "GET") {
       return mockResponse(options.jobs ?? []);
+    }
+
+    if (url.includes("/api/projects/") && url.endsWith("/runs") && method === "GET") {
+      return mockResponse(options.runs ?? []);
+    }
+
+    if (
+      url.includes("/api/runs/") &&
+      !url.includes("/report") &&
+      !url.includes("/compare") &&
+      method === "GET"
+    ) {
+      return options.runDetail
+        ? mockResponse(options.runDetail)
+        : mockResponse({ error: { code: "run_not_found", message: "Run not found." } }, 404);
     }
 
     if (url.includes("/jobs/") && url.endsWith("/plan") && method === "GET") {
@@ -518,6 +669,27 @@ describe("App", () => {
     expect(screen.getByText("Asserts: json_body:/status equals")).toBeInTheDocument();
     expect(screen.getByText("after session")).toBeInTheDocument();
     expect(screen.getByText("error rate 0.05")).toBeInTheDocument();
+  });
+
+  it("opens a run and shows traceable results and report claims", async () => {
+    await renderSignedIn({
+      session: true,
+      projects: [PROJECT],
+      runs: [RUN],
+      runDetail: RUN_DETAIL,
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
+    expect(await screen.findByText("Runs")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: /View results/ }));
+
+    expect(await screen.findByRole("heading", { name: "Run results" })).toBeInTheDocument();
+    expect(
+      (await screen.findAllByText("Missing security header observed.")).length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByText("HYPOTHESIS")).toBeInTheDocument();
+    expect(screen.getByText(/stored reference/)).toBeInTheDocument();
+    expect(screen.getByText("https://inert.example.test")).toBeInTheDocument();
   });
 
   it("shows a reload action when a concurrent edit conflicts", async () => {

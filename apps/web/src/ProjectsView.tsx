@@ -13,11 +13,14 @@ import {
   listJobs,
   listMembers,
   listProjects,
+  listRuns,
   type Project,
   type ProjectMember,
   type ProjectRole,
+  type RunSummaryEntry,
 } from "./api";
 import { PlanReview } from "./PlanReview";
+import { RunReport } from "./RunReport";
 
 interface ProjectsViewProps {
   readonly user: AuthUser;
@@ -70,6 +73,25 @@ const JOB_STATUS_LABELS: Record<Job["status"], string> = {
   expired: "Expired",
 };
 
+const RUN_TYPE_LABELS: Record<RunSummaryEntry["runType"], string> = {
+  vulnerability_testing: "Vulnerability testing",
+  load_testing: "Load testing",
+};
+
+const RUN_STATUS_LABELS: Record<string, string> = {
+  draft: "Draft",
+  awaiting_target: "Awaiting target",
+  scheduled: "Scheduled",
+  queued: "Queued",
+  running: "Running",
+  analyzing_results: "Analyzing results",
+  completed: "Completed",
+  failed: "Failed",
+  cancelled: "Cancelled",
+  expired: "Expired",
+  completed_with_report_error: "Completed with report error",
+};
+
 const dateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
 const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
@@ -114,6 +136,11 @@ export function ProjectsView({ user, csrfToken, onSignOut, onSessionExpired }: P
   const [jobsLoading, setJobsLoading] = useState(false);
   const [jobsError, setJobsError] = useState<string | null>(null);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
+
+  const [runs, setRuns] = useState<RunSummaryEntry[]>([]);
+  const [runsLoading, setRunsLoading] = useState(false);
+  const [runsError, setRunsError] = useState<string | null>(null);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
   const [memberEmail, setMemberEmail] = useState("");
   const [memberRole, setMemberRole] = useState<ProjectRole>("viewer");
@@ -209,6 +236,28 @@ export function ProjectsView({ user, csrfToken, onSignOut, onSessionExpired }: P
         }
       }
 
+      setRunsLoading(true);
+      setRunsError(null);
+      try {
+        const next = await listRuns(projectId);
+        if (generation === detailGeneration.current) {
+          setRuns(next);
+        }
+      } catch (error) {
+        if (generation !== detailGeneration.current) {
+          return;
+        }
+        const message = handleError(error);
+        if (!message) {
+          return;
+        }
+        setRunsError(message);
+      } finally {
+        if (generation === detailGeneration.current) {
+          setRunsLoading(false);
+        }
+      }
+
       if (canViewAudit(role)) {
         setAuditLoading(true);
         setAuditError(null);
@@ -281,6 +330,7 @@ export function ProjectsView({ user, csrfToken, onSignOut, onSessionExpired }: P
 
   useEffect(() => {
     setSelectedJob(null);
+    setSelectedRunId(null);
     if (!selectedProjectId || !selectedRole) {
       detailGeneration.current += 1;
       setMembers([]);
@@ -292,6 +342,9 @@ export function ProjectsView({ user, csrfToken, onSignOut, onSessionExpired }: P
       setJobs([]);
       setJobsLoading(false);
       setJobsError(null);
+      setRuns([]);
+      setRunsLoading(false);
+      setRunsError(null);
       return;
     }
     void loadDetails(selectedProjectId, selectedRole);
@@ -428,12 +481,14 @@ export function ProjectsView({ user, csrfToken, onSignOut, onSessionExpired }: P
                   WORKSPACE
                 </p>
                 <h1 className="mt-1 text-[28px] font-semibold leading-tight tracking-[-0.025em]">
-                  {selectedJob ? "Plan review" : "Projects"}
+                  {selectedRunId ? "Run results" : selectedJob ? "Plan review" : "Projects"}
                 </h1>
                 <p className="mt-1.5 max-w-xl text-[13px] text-pf-text-secondary">
-                  {selectedJob
-                    ? "Review the proposed tests, prerequisites, risks, and configuration before recording an immutable approval."
-                    : "Each project holds repository analysis, proposed plans, approvals, and evidence for one codebase or deployed application."}
+                  {selectedRunId
+                    ? "Inspect stored results, evidence, observed metrics, and versioned report claims for this run."
+                    : selectedJob
+                      ? "Review the proposed tests, prerequisites, risks, and configuration before recording an immutable approval."
+                      : "Each project holds repository analysis, proposed plans, approvals, and evidence for one codebase or deployed application."}
                 </p>
               </div>
 
@@ -455,7 +510,16 @@ export function ProjectsView({ user, csrfToken, onSignOut, onSessionExpired }: P
           </header>
 
           <div className="px-6 py-7 lg:px-9 lg:py-8">
-            {selectedJob ? (
+            {selectedRunId && selectedRole ? (
+              <RunReport
+                runId={selectedRunId}
+                projectId={selectedProjectId ?? ""}
+                canWrite={selectedRole !== "viewer"}
+                csrfToken={csrfToken}
+                onBack={() => setSelectedRunId(null)}
+                onSessionExpired={onSessionExpired}
+              />
+            ) : selectedJob ? (
               <PlanReview
                 job={selectedJob}
                 canEdit={selectedRole !== null && selectedRole !== "viewer"}
@@ -610,6 +674,7 @@ export function ProjectsView({ user, csrfToken, onSignOut, onSessionExpired }: P
                               onClick={() => {
                                 setSelectedId(project.id);
                                 setSelectedJob(null);
+                                setSelectedRunId(null);
                               }}
                               className={`flex w-full flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3.5 text-left transition-colors ${
                                 active ? "bg-pf-accent-soft/65" : "hover:bg-pf-surface-hover"
@@ -717,7 +782,10 @@ export function ProjectsView({ user, csrfToken, onSignOut, onSessionExpired }: P
                                   <button
                                     type="button"
                                     disabled={!hasPlan}
-                                    onClick={() => setSelectedJob(job)}
+                                    onClick={() => {
+                                      setSelectedRunId(null);
+                                      setSelectedJob(job);
+                                    }}
                                     className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 py-2.5 text-left transition-colors hover:bg-pf-surface-hover disabled:cursor-default disabled:hover:bg-transparent"
                                   >
                                     <span className="min-w-0 flex-1">
@@ -740,6 +808,62 @@ export function ProjectsView({ user, csrfToken, onSignOut, onSessionExpired }: P
                                 </li>
                               );
                             })}
+                          </ul>
+                        )}
+                      </section>
+
+                      <section
+                        className="border-b border-pf-border px-5 py-4"
+                        aria-labelledby="runs-heading"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <h3 id="runs-heading" className="text-[13px] font-semibold">
+                            Runs
+                          </h3>
+                          <span className="text-[11px] text-pf-text-muted">
+                            {runs.length} {runs.length === 1 ? "run" : "runs"}
+                          </span>
+                        </div>
+                        {runsLoading ? (
+                          <p role="status" className="mt-3 text-[12px] text-pf-text-secondary">
+                            Loading runs...
+                          </p>
+                        ) : runsError ? (
+                          <p role="alert" className="mt-3 text-[12px] text-pf-error">
+                            {runsError}
+                          </p>
+                        ) : runs.length === 0 ? (
+                          <p className="mt-3 text-[11px] leading-4 text-pf-text-muted">
+                            No runs yet. A run appears after an approved plan is scheduled or
+                            executed.
+                          </p>
+                        ) : (
+                          <ul className="mt-3 divide-y divide-pf-border">
+                            {runs.map((run) => (
+                              <li key={run.id}>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedJob(null);
+                                    setSelectedRunId(run.id);
+                                  }}
+                                  className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 py-2.5 text-left transition-colors hover:bg-pf-surface-hover"
+                                >
+                                  <span className="min-w-0 flex-1">
+                                    <span className="block truncate text-[12px] font-medium">
+                                      {RUN_TYPE_LABELS[run.runType] ?? run.runType}
+                                    </span>
+                                    <span className="mt-0.5 block text-[10px] text-pf-text-muted">
+                                      {RUN_STATUS_LABELS[run.status] ?? run.status} · plan v
+                                      {run.planVersion} · {formatDateTime(run.createdAt)}
+                                    </span>
+                                  </span>
+                                  <span className="shrink-0 text-[10px] font-medium text-pf-accent">
+                                    View results →
+                                  </span>
+                                </button>
+                              </li>
+                            ))}
                           </ul>
                         )}
                       </section>

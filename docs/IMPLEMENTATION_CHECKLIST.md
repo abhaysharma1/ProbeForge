@@ -360,11 +360,11 @@ Legend: `[x]` done with evidence - `[ ]` not done.
 
 ## Phase 13 — Results, AI recommendations, and reports
 
-**Status:** Complete (server-side) - [report](phases/13_results_reports_report.md). A dedicated web view for the result pages and run summary is deferred until it can meet the frontend design gate; the authenticated JSON API exposes the full run summary, per-test results, evidence metadata, recommendations, metrics, and report.
+**Status:** Complete - [report](phases/13_results_reports_report.md). Result pages and the run summary are available in the web app (project detail → Runs), backed by the authenticated JSON API.
 
 **Tasks**
 
-- [x] Build per-test result pages and a run summary - authenticated `GET /api/projects/{id}/runs` and `GET /api/runs/{id}` return the run summary, per-test results, evidence metadata, recommendations, metrics, and report. No web view yet (documented limitation).
+- [x] Build per-test result pages and a run summary - `RunReport.tsx` renders the run summary, per-test results, evidence metadata, recommendations, metrics, and report claims; the project detail lists runs and opens the view.
 - [x] Preserve raw structured observations and sanitized evidence independently of AI summaries - `test_results.observation` and the immutable `evidence` table are read directly; generated summaries live only in `report_versions`/`recommendations`.
 - [x] Generate recommendations referencing result/evidence IDs - deterministic `recommendations` rows cite `result_id`/`evidence_id`/`run_metric_id`, enforced by the `recommendations_traceability` constraint.
 - [x] Distinguish confirmed findings, suspected findings, passed checks, skipped checks, inconclusive results, and execution errors - `test_results.finding_status` plus the closed outcome vocabulary; reports split `findings` from `checks`.
@@ -383,8 +383,9 @@ Legend: `[x]` done with evidence - `[ ]` not done.
 **Evidence**
 
 - Results/reports API: `services/api/src/results.rs`
+- Web result pages and run summary: `apps/web/src/RunReport.tsx`, `apps/web/src/ProjectsView.tsx`, `apps/web/src/api.ts`
 - Migration: `migrations/0013_results_reports.sql`
-- Integration tests: `services/api/tests/results_reports.rs`
+- Integration tests: `services/api/tests/results_reports.rs`, `apps/web/src/App.test.tsx`
 - Report: `docs/phases/13_results_reports_report.md`
 
 ## Phase 14 — Observability, quotas, and operational hardening
