@@ -1266,6 +1266,7 @@ dependencies = [
  "futures-core",
  "getrandom 0.3.4",
  "probe-forge-execution-adapters",
+ "probe-forge-execution-worker",
  "probe-forge-observability",
  "probe-forge-queue",
  "probe-forge-target-policy",
@@ -1305,16 +1306,24 @@ name = "probe-forge-execution-worker"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "chrono",
+ "probe-forge-execution-adapters",
  "probe-forge-load-runner",
  "probe-forge-observability",
+ "probe-forge-queue",
+ "probe-forge-target-policy",
+ "probeforge-contracts",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
+ "sqlx",
  "thiserror",
  "tokio",
  "tower",
  "tower-http 0.7.1",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

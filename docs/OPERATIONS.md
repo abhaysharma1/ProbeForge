@@ -199,13 +199,31 @@ gitignored and must never contain real target data.
 5. **Restore.** Follow the restore procedure above; validate with
    `db:backup:check` before resuming traffic.
 
+## End-to-end workflow (operator-invoked)
+
+Neither analysis nor execution runs automatically; a human (or an external
+supervisor) drives each stage:
+
+```bash
+bun run --cwd services/analysis-worker plan     # queued job -> draft plan (awaiting_approval)
+# review and approve the plan (web UI or POST /api/plans/{id}/approve)
+# POST /api/plans/{id}/runs with an active target authorization id
+cargo run -p probe-forge-execution-worker --bin dispatch -- --once   # execute queued runs
+# POST /api/runs/{id}/report to generate the versioned report
+```
+
+`dispatch` enforces target scope, redirect, DNS, and budget policy below the
+dispatcher; loopback/private targets stay blocked unless
+`PROBE_FORGE_ALLOW_PRIVATE_TARGETS=true` is set for a secured local mock. See
+`docs/RELEASE_READINESS.md` for the full runbook.
+
 ## Limitations
 
 - No external metrics system is integrated; `/metricsz` and structured logs are
   the interfaces. There is no alerting.
-- The execution worker is health-only; it does not claim or run jobs yet, so
-  quotas and leases are enforced and tested at the queue layer but not exercised
-  end-to-end.
+- Analysis and execution are operator-invoked binaries, not supervised daemons;
+  there is no scheduler-driven drain, so continuous operation needs an external
+  supervisor.
 - Rate limits are per process window in a shared table; a multi-process
   deployment shares the table, but clock skew between hosts is not corrected.
 - Retention deletes immutable rows only through the opt-in path; it does not

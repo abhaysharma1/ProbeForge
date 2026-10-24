@@ -9,15 +9,23 @@ publish.workspace = true
 
 [dependencies]
 axum.workspace = true
+chrono.workspace = true
+probe-forge-execution-adapters.workspace = true
 probe-forge-load-runner.workspace = true
 probe-forge-observability.workspace = true
+probe-forge-queue.workspace = true
+probe-forge-target-policy.workspace = true
+probeforge-contracts.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 tower = { version = "0.5.3", features = ["util"] }

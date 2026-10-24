@@ -11,10 +11,9 @@ The AI agent (Pi) inspects a pinned commit of the user's repository and proposes
 
 ## Status
 
-**Phase 14 - Observability, quotas, and operational hardening: complete.** See the [phase report](docs/phases/14_observability_operations_report.md).
+**Phase 15 - End-to-end acceptance using local fixtures: complete.** See the [phase report](docs/phases/15_end_to_end_acceptance_report.md) and the [release-readiness checklist](docs/RELEASE_READINESS.md).
 
-- **Phase 15 - End-to-end acceptance using local fixtures: in progress.** Run creation from an approved plan and run cancellation are implemented and tested (`services/api/src/runs.rs`). The analysis-worker job loop, execution-worker dispatch, and the acceptance suite remain, so Phase 15 is not yet complete.
-- Next permitted phase: **Phase 15 - End-to-end acceptance using local fixtures** (continues; the phase gate is not met yet).
+- **All phases 0–15 are complete.** A separate, explicitly approved staging smoke test may now be performed per the release-readiness checklist.
 - Phase tasks and exit gates: [docs/IMPLEMENTATION_CHECKLIST.md](docs/IMPLEMENTATION_CHECKLIST.md)
 - Decisions, interpretations, and open questions: [docs/DECISION_LOG.md](docs/DECISION_LOG.md)
 - Contract details: [docs/CONTRACTS.md](docs/CONTRACTS.md) · Database details: [docs/DATABASE.md](docs/DATABASE.md) · Authentication and RBAC: [docs/AUTH.md](docs/AUTH.md) · Jobs and queue: [docs/JOBS.md](docs/JOBS.md) · Read-only ingestion: [docs/REPOSITORY_INGESTION.md](docs/REPOSITORY_INGESTION.md) · Static discovery: [docs/DISCOVERY.md](docs/DISCOVERY.md) · Pi planning: [docs/PLANNING.md](docs/PLANNING.md) · Plan approval: [docs/PLAN_APPROVAL.md](docs/PLAN_APPROVAL.md) · Target validation: [docs/TARGET_VALIDATION.md](docs/TARGET_VALIDATION.md) · Execution adapters: [docs/EXECUTION_ADAPTERS.md](docs/EXECUTION_ADAPTERS.md) · Load scenarios: [docs/LOAD_SCENARIOS.md](docs/LOAD_SCENARIOS.md) · Load execution: [docs/LOAD_EXECUTION.md](docs/LOAD_EXECUTION.md) · Results and reports: [docs/RESULTS_REPORTS.md](docs/RESULTS_REPORTS.md) · Operations: [docs/OPERATIONS.md](docs/OPERATIONS.md)

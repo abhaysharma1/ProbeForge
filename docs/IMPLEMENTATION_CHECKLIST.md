@@ -424,22 +424,22 @@ Legend: `[x]` done with evidence - `[ ]` not done.
 
 ## Phase 15 — End-to-end acceptance using local fixtures
 
-**Status:** In progress - run materialization and cancellation from an approved plan are implemented and tested (`services/api/src/runs.rs`, `services/api/tests/runs_lifecycle.rs`). The analysis worker job loop, execution-worker dispatch (vulnerability and load), and the end-to-end acceptance suite remain.
+**Status:** Complete - [report](phases/15_end_to_end_acceptance_report.md). Run lifecycle, execution dispatch, and the analysis job loop work end to end against inert fixtures and a local mock; see [docs/RELEASE_READINESS.md](../docs/RELEASE_READINESS.md).
 
 **Tasks**
 
-- [ ] Run the full vulnerability workflow against inert fixture repositories and mocked targets
-- [ ] Run the full load workflow against a local mock HTTP service only
-- [ ] Test user approval, scheduling, cancellation, retries, worker crashes, lease recovery, partial results, and report generation
-- [ ] Test cross-project authorization and target-scope rejection
-- [ ] Test duplicate requests and idempotency
-- [ ] Review all phase exit gates and unresolved limitations
-- [ ] Produce a release-readiness checklist
+- [x] Run the full vulnerability workflow against inert fixture repositories and mocked targets - `end_to_end.rs` (approved plan → run → adapter → result/evidence → report).
+- [x] Run the full load workflow against a local mock HTTP service only - `end_to_end.rs` (approved scenario → run → constrained runner → metrics).
+- [x] Test user approval, scheduling, cancellation, retries, worker crashes, lease recovery, partial results, and report generation - approval via `plans_approval.rs`, cancellation via `runs_lifecycle.rs`, leases/retries/recovery via `queue.rs`, results/reports via `results_reports.rs`.
+- [x] Test cross-project authorization and target-scope rejection - `end_to_end.rs` out-of-scope case and the tenant-isolation assertions across the suites.
+- [x] Test duplicate requests and idempotency - `runs_lifecycle.rs` and `jobs_queue.rs`.
+- [x] Review all phase exit gates and unresolved limitations - Phase reports 00–15; limitations recorded per phase and in `docs/RELEASE_READINESS.md`.
+- [x] Produce a release-readiness checklist - `docs/RELEASE_READINESS.md`.
 
 **Exit gate**
 
-- [ ] All automated checks pass
-- [ ] Both end-to-end workflows work with safe local fixtures
-- [ ] No real security scan or load test was executed as part of acceptance
-- [ ] Documentation describes what is and is not supported
-- [ ] Only after this gate may an authorized operator perform a separate, manually approved staging smoke test
+- [x] All automated checks pass
+- [x] Both end-to-end workflows work with safe local fixtures
+- [x] No real security scan or load test was executed as part of acceptance
+- [x] Documentation describes what is and is not supported
+- [x] Only after this gate may an authorized operator perform a separate, manually approved staging smoke test

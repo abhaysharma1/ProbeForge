@@ -37,5 +37,6 @@ uuid.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+probe-forge-execution-worker.workspace = true
 probe-forge-queue.workspace = true
 tower = { version = "0.5.3", features = ["util"] }

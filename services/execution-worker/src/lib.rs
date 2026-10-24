@@ -9,8 +9,14 @@ use tracing::info;
 pub const SERVICE_NAME: &str = "probe-forge-execution-worker";
 
 /// The constrained load-runner library is owned by the execution worker. The
-/// service remains health-only until an authenticated dispatcher is wired.
+/// HTTP service stays health-only; queued runs are executed by the operator
+/// `dispatch` binary (or by calling `dispatch_once` directly), never by an
+/// unauthenticated endpoint.
 pub use probe_forge_load_runner as load_runner;
+
+pub mod dispatch;
+
+pub use dispatch::{DispatchConfig, DispatchError, DispatchedRun, dispatch_once};
 
 const DEFAULT_BIND_ADDR: &str = "127.0.0.1:8082";
 const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;

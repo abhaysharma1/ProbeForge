@@ -382,6 +382,26 @@ Format per decision: status, context, decision, rationale, alternatives, impact.
 - **Alternatives:** Create runs at approval time (rejected: no target authorization exists yet and it would start work without an explicit execution choice); let the frontend talk to the queue (rejected: server-owned authority); cancel running runs directly (rejected: would race the lease owner).
 - **Impact:** The API can now produce queued runs, but the execution worker does not yet claim them and the analysis worker does not yet turn a queued job into a plan, so Phase 15's exit gate is not met. Both remain the next work items.
 
+### D-040 - Execution dispatch is an operator binary, not an unauthenticated loop
+
+- **Date:** 2026-10-24
+- **Status:** Accepted (Phase 15)
+- **Context:** Phase 15 must run both workflows end to end, but the execution worker had no database access or dispatch. Giving the health-only HTTP service an automatic claim loop would let queued runs start without an operator present.
+- **Decision:** Add `dispatch_once(pool, config)` to `services/execution-worker` and expose it through the operator `dispatch` binary (`--once` drains the queue and exits). It claims via `claim_due_run_fair`, loads the authorization scope/limits and target environment, and executes vulnerability runs with the vetted adapters (persisting `test_results` and evidence) or load runs with the constrained runner (persisting `run_metrics`). Transient target failures retry with backoff; scope violations fail closed. The HTTP service stays health-only.
+- **Rationale:** The project already treats ingestion as an operator CLI (Phase 5). Keeping dispatch operator-driven preserves "no work runs without a human," keeps the security-sensitive network path behind an explicit action, and stays testable by calling the same function from the acceptance test.
+- **Alternatives:** Add a background dispatch loop to the health service (rejected: implicit execution and no clear stop); expose an HTTP dispatch endpoint (rejected: new authenticated surface and blast radius); run execution inside the API (rejected: couples the control plane to network execution).
+- **Impact:** Continuous operation needs an external supervisor to run the binary. Results map to the Phase 13 shapes (`finding_status`/`severity`/`observation`); evidence is redacted and hashed. See `docs/RELEASE_READINESS.md`.
+
+### D-041 - The analysis job loop is operator-invoked and falls back deterministically
+
+- **Date:** 2026-10-24
+- **Status:** Accepted (Phase 15)
+- **Context:** Phase 15 needs the vulnerability workflow to start from an inert fixture repository. The analysis worker had ingestion, discovery, planning, and a plan store, but no job claim loop.
+- **Decision:** Add `processJobOnce(connectionString, options)` (`src/job-loop.ts`) and the `bun run plan` CLI. It claims one queued job with `FOR UPDATE SKIP LOCKED`, ingests the pinned repository read-only with explicit local-fixture opt-in, runs deterministic discovery, and generates a draft plan. With no configured model it uses the existing deterministic fallback planner, then moves the job to `awaiting_approval`; retryable outcomes return it to the queue with backoff.
+- **Rationale:** Reusing the tested discovery and fallback planner keeps the loop small and never contacts a model or a target, matching the repository's no-execution invariant. Operator invocation mirrors ingestion.
+- **Alternatives:** Add a background loop to the worker HTTP service (rejected: implicit work); require a configured model (rejected: fallback exists and is sufficient for acceptance); generate the plan inside the API (rejected: planning is the worker's job).
+- **Impact:** The full chain (job → plan → approval → runs → dispatch → report) is exercised by the Phase 15 acceptance tests. Continuous operation needs an external supervisor.
+
 ## Open questions
 
 | ID | Question | Needed by | Notes |

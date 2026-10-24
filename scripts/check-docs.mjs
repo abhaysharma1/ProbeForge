@@ -65,7 +65,9 @@ const REQUIRED_FILES = [
   "docs/phases/12_load_runner_scheduler_report.md",
   "docs/phases/13_results_reports_report.md",
   "docs/phases/14_observability_operations_report.md",
+  "docs/phases/15_end_to_end_acceptance_report.md",
   "docs/OPERATIONS.md",
+  "docs/RELEASE_READINESS.md",
   "docs/LOAD_EXECUTION.md",
   "docs/RESULTS_REPORTS.md",
   "infra/local/compose.yaml",
@@ -96,6 +98,11 @@ const REQUIRED_FILES = [
   "services/api/src/bin/migrate.rs",
   "services/api/src/bin/create-user.rs",
   "services/api/src/jobs.rs",
+  "services/api/src/runs.rs",
+  "services/api/tests/end_to_end.rs",
+  "services/execution-worker/src/dispatch.rs",
+  "services/execution-worker/src/bin/dispatch.rs",
+  "services/analysis-worker/src/job-loop.ts",
   "services/api/tests/migrations.rs",
   "services/api/tests/auth_projects.rs",
   "services/api/tests/jobs_queue.rs",
@@ -127,6 +134,7 @@ const LINKED_DOCS = [
   "docs/LOAD_EXECUTION.md",
   "docs/RESULTS_REPORTS.md",
   "docs/OPERATIONS.md",
+  "docs/RELEASE_READINESS.md",
 ];
 
 // High-signal patterns only; generic words like "password" appear in policy prose on purpose.
