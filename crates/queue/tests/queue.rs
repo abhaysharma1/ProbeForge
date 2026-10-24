@@ -3,10 +3,13 @@
 
 use std::path::Path;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use probe_forge_load_runner::{MetricBucket, RunMetrics, RunSummary, persist_metrics};
 use probe_forge_queue::{
-    FailOutcome, claim_due_run, claim_job, complete_job, fail_job, heartbeat_job, promote_due_runs,
-    recover_expired_job_leases,
+    FailOutcome, NewSchedule, cancel_schedule, claim_due_run, claim_due_run_fair, claim_job,
+    complete_job, complete_run, create_schedule, fail_job, fail_run, heartbeat_job, heartbeat_run,
+    promote_due_runs, promote_due_schedules, recover_expired_job_leases,
+    recover_expired_run_leases, recover_expired_schedules,
 };
 use sqlx::{PgPool, migrate::Migrator, postgres::PgPoolOptions};
 use uuid::Uuid;
@@ -18,6 +21,7 @@ struct TestQueue {
     user_id: Uuid,
     project_id: Uuid,
     git_source_id: Uuid,
+    authorization_id: Uuid,
 }
 
 fn database_url() -> Option<String> {
@@ -117,6 +121,41 @@ impl TestQueue {
         .await
         .expect("git source insert");
 
+        let target_id = Uuid::new_v4();
+        let authorization_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO targets (
+                id, project_id, normalized_origin, environment, allowed_hosts,
+                allowed_paths, verification_status, created_by
+             )
+             VALUES ($1, $2, 'https://inert.example.test', 'staging',
+                     '[\"inert.example.test\"]'::jsonb, '[\"/api/\"]'::jsonb,
+                     'verified', $3)",
+        )
+        .bind(target_id)
+        .bind(project_id)
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .expect("target insert");
+        sqlx::query(
+            "INSERT INTO target_authorizations (
+                id, project_id, target_id, authorized_by, authorization_method,
+                scope, limits, expires_at
+             )
+             VALUES ($1, $2, $3, $4, 'explicit_confirmation',
+                     '{\"origin\":\"https://inert.example.test\",\"allowedHosts\":[\"inert.example.test\"],\"allowedPaths\":[\"/api/\"],\"allowedPorts\":[443]}'::jsonb,
+                     '{\"maxRequestsPerSecond\":10,\"maxConcurrency\":10,\"maxDurationSeconds\":3600,\"maxRequests\":10000}'::jsonb,
+                     now() + interval '30 days')",
+        )
+        .bind(authorization_id)
+        .bind(project_id)
+        .bind(target_id)
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .expect("authorization insert");
+
         Some(Self {
             admin,
             pool,
@@ -124,6 +163,7 @@ impl TestQueue {
             user_id,
             project_id,
             git_source_id,
+            authorization_id,
         })
     }
 
@@ -145,12 +185,128 @@ impl TestQueue {
         .expect("job insert")
     }
 
+    async fn seed_load_schedule(
+        &self,
+        label: &str,
+        start_at: DateTime<Utc>,
+        recurrence: &str,
+        timezone: &str,
+    ) -> Uuid {
+        let job_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO jobs (
+                project_id, created_by, goal, intensity, status, display_name,
+                git_source_id, source_reference
+             )
+             VALUES ($1, $2, 'load_testing', 'standard', 'awaiting_approval', $3, $4, 'main')
+             RETURNING id",
+        )
+        .bind(self.project_id)
+        .bind(self.user_id)
+        .bind(format!("Load schedule fixture {label}"))
+        .bind(self.git_source_id)
+        .fetch_one(&self.pool)
+        .await
+        .expect("load job insert");
+
+        let plan_id = Uuid::new_v4();
+        let approval_id = Uuid::new_v4();
+        let profile_id = Uuid::new_v4();
+        let scenario_id = Uuid::new_v4();
+
+        sqlx::query(
+            "INSERT INTO test_plans (
+                id, project_id, job_id, version, status, summary, confidence, plan_payload
+             )
+             VALUES ($1, $2, $3, 1, 'approved', 'Inert load fixture plan', 0.50, '{}')",
+        )
+        .bind(plan_id)
+        .bind(self.project_id)
+        .bind(job_id)
+        .execute(&self.pool)
+        .await
+        .expect("load plan insert");
+        sqlx::query(
+            "INSERT INTO load_profiles (
+                id, project_id, name, virtual_users, ramp_up_seconds, duration_seconds,
+                max_requests, max_requests_per_second, stop_conditions
+             )
+             VALUES ($1, $2, 'Inert profile', 1, 1, 5, 20, 2, '{}'::jsonb)",
+        )
+        .bind(profile_id)
+        .bind(self.project_id)
+        .execute(&self.pool)
+        .await
+        .expect("load profile insert");
+        sqlx::query(
+            "INSERT INTO load_scenarios (
+                id, project_id, plan_id, profile_id, name, schema_version, scenario, selected
+             )
+             VALUES ($1, $2, $3, $4, 'Inert scenario', '1', $5, true)",
+        )
+        .bind(scenario_id)
+        .bind(self.project_id)
+        .bind(plan_id)
+        .bind(profile_id)
+        .bind(serde_json::json!({
+            "name": "Inert scenario",
+            "description": "Inert queue fixture; no traffic.",
+            "requests": [{
+                "id": "baseline",
+                "method": "GET",
+                "path": "/api/items",
+                "expectedStatuses": [200]
+            }],
+            "profile": {
+                "virtualUsers": 1,
+                "rampUpSeconds": 1,
+                "durationSeconds": 5,
+                "maxRequests": 20,
+                "maxRequestsPerSecond": 2
+            }
+        }))
+        .execute(&self.pool)
+        .await
+        .expect("load scenario insert");
+        sqlx::query(
+            "INSERT INTO plan_approvals (
+                id, project_id, plan_id, plan_version, approved_by,
+                approved_test_ids, approved_load_scenario_ids, approval_snapshot
+             )
+             VALUES ($1, $2, $3, 1, $4, '{}'::uuid[], ARRAY[$5]::uuid[], '{}')",
+        )
+        .bind(approval_id)
+        .bind(self.project_id)
+        .bind(plan_id)
+        .bind(self.user_id)
+        .bind(scenario_id)
+        .execute(&self.pool)
+        .await
+        .expect("load approval insert");
+
+        let schedule = create_schedule(
+            &self.pool,
+            NewSchedule {
+                project_id: self.project_id,
+                job_id,
+                plan_id,
+                load_scenario_id: scenario_id,
+                target_authorization_id: self.authorization_id,
+                timezone: timezone.to_owned(),
+                recurrence: recurrence.to_owned(),
+                start_at,
+                expires_at: Some(Utc::now() + ChronoDuration::days(3)),
+                created_by: self.user_id,
+            },
+        )
+        .await
+        .expect("schedule create");
+        schedule.id
+    }
+
     async fn seed_due_run(&self, job_id: Uuid) -> Uuid {
         let test_id = Uuid::new_v4();
         let plan_id = Uuid::new_v4();
         let approval_id = Uuid::new_v4();
-        let target_id = Uuid::new_v4();
-        let authorization_id = Uuid::new_v4();
         let run_id = Uuid::new_v4();
 
         sqlx::query(
@@ -194,38 +350,6 @@ impl TestQueue {
         .execute(&self.pool)
         .await
         .expect("approval insert");
-        sqlx::query(
-            "INSERT INTO targets (
-                id, project_id, normalized_origin, environment, allowed_hosts,
-                allowed_paths, verification_status, created_by
-             )
-             VALUES ($1, $2, 'https://inert.example.test', 'staging',
-                     '[\"inert.example.test\"]'::jsonb, '[\"/api/\"]'::jsonb,
-                     'verified', $3)",
-        )
-        .bind(target_id)
-        .bind(self.project_id)
-        .bind(self.user_id)
-        .execute(&self.pool)
-        .await
-        .expect("target insert");
-        sqlx::query(
-            "INSERT INTO target_authorizations (
-                id, project_id, target_id, authorized_by, authorization_method,
-                scope, limits, expires_at
-             )
-             VALUES ($1, $2, $3, $4, 'explicit_confirmation',
-                     '{\"origin\":\"https://inert.example.test\",\"allowedHosts\":[\"inert.example.test\"],\"allowedPaths\":[\"/api/\"],\"allowedPorts\":[443]}'::jsonb,
-                     '{\"maxRequestsPerSecond\":1,\"maxConcurrency\":1,\"maxDurationSeconds\":60,\"maxRequests\":10}'::jsonb,
-                     now() + interval '1 day')",
-        )
-        .bind(authorization_id)
-        .bind(self.project_id)
-        .bind(target_id)
-        .bind(self.user_id)
-        .execute(&self.pool)
-        .await
-        .expect("authorization insert");
         sqlx::query_scalar(
             "INSERT INTO test_runs (
                 project_id, job_id, plan_id, plan_version, plan_approval_id,
@@ -241,7 +365,7 @@ impl TestQueue {
         .bind(plan_id)
         .bind(approval_id)
         .bind(test_id)
-        .bind(authorization_id)
+        .bind(self.authorization_id)
         .bind(format!("queue-run-{run_id}"))
         .fetch_one(&self.pool)
         .await
@@ -287,6 +411,20 @@ async fn expire_lease(pool: &PgPool, job_id: Uuid, seconds_ago: i64) {
     .execute(pool)
     .await
     .expect("expire lease");
+}
+
+async fn expire_run_lease(pool: &PgPool, run_id: Uuid, seconds_ago: i64) {
+    sqlx::query(
+        "UPDATE test_runs
+         SET lease_expires_at = now() - make_interval(secs => $2::double precision),
+             heartbeat_at = now() - make_interval(secs => $2::double precision)
+         WHERE id = $1",
+    )
+    .bind(run_id)
+    .bind(seconds_ago as f64)
+    .execute(pool)
+    .await
+    .expect("expire run lease");
 }
 
 #[tokio::test]
@@ -535,6 +673,299 @@ async fn scheduler_promotes_and_claims_due_runs() {
     .await
     .expect("run event count");
     assert_eq!(started_events, 1);
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn scheduler_persists_and_handles_due_future_cancelled_and_expired_schedules() {
+    let Some(app) = TestQueue::setup().await else {
+        return;
+    };
+
+    let due_schedule = app
+        .seed_load_schedule(
+            "due",
+            Utc::now() - ChronoDuration::minutes(1),
+            "once",
+            "UTC",
+        )
+        .await;
+    let future_schedule = app
+        .seed_load_schedule(
+            "future",
+            Utc::now() + ChronoDuration::hours(1),
+            "daily",
+            "+02:00",
+        )
+        .await;
+
+    let promoted = promote_due_schedules(&app.pool, 10)
+        .await
+        .expect("promote schedules");
+    assert_eq!(promoted.len(), 1);
+    let due_run = promoted[0].id;
+    let run_status: String = sqlx::query_scalar("SELECT status FROM test_runs WHERE id = $1")
+        .bind(due_run)
+        .fetch_one(&app.pool)
+        .await
+        .expect("due run status");
+    assert_eq!(run_status, "queued");
+    let schedule_state: (bool, Option<DateTime<Utc>>, String) =
+        sqlx::query_as("SELECT enabled, next_run_at, timezone FROM schedules WHERE id = $1")
+            .bind(due_schedule)
+            .fetch_one(&app.pool)
+            .await
+            .expect("due schedule state");
+    assert!(!schedule_state.0);
+    assert!(schedule_state.1.is_none());
+
+    let future_state: (bool, Option<DateTime<Utc>>, String) =
+        sqlx::query_as("SELECT enabled, next_run_at, timezone FROM schedules WHERE id = $1")
+            .bind(future_schedule)
+            .fetch_one(&app.pool)
+            .await
+            .expect("future schedule state");
+    assert!(future_state.0);
+    assert!(future_state.1.is_some());
+    assert_eq!(future_state.2, "+02:00");
+
+    let cancelled_schedule = app
+        .seed_load_schedule(
+            "cancelled",
+            Utc::now() - ChronoDuration::minutes(1),
+            "once",
+            "UTC",
+        )
+        .await;
+    promote_due_schedules(&app.pool, 10)
+        .await
+        .expect("promote cancelled candidate");
+    assert!(
+        cancel_schedule(&app.pool, cancelled_schedule)
+            .await
+            .expect("cancel schedule")
+    );
+    let cancelled_run_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM test_runs WHERE schedule_id = $1 AND status = 'cancelled'",
+    )
+    .bind(cancelled_schedule)
+    .fetch_one(&app.pool)
+    .await
+    .expect("cancelled run count");
+    assert_eq!(cancelled_run_count, 1);
+    let cancelled_at: Option<DateTime<Utc>> =
+        sqlx::query_scalar("SELECT cancelled_at FROM schedules WHERE id = $1")
+            .bind(cancelled_schedule)
+            .fetch_one(&app.pool)
+            .await
+            .expect("cancelled timestamp");
+    assert!(cancelled_at.is_some());
+
+    let expired_schedule = app
+        .seed_load_schedule(
+            "expired",
+            Utc::now() - ChronoDuration::minutes(1),
+            "once",
+            "UTC",
+        )
+        .await;
+    sqlx::query(
+        "UPDATE schedules
+         SET expires_at = now() - interval '1 second', next_run_at = now() - interval '1 minute'
+         WHERE id = $1",
+    )
+    .bind(expired_schedule)
+    .execute(&app.pool)
+    .await
+    .expect("expire schedule");
+    let recovered = recover_expired_schedules(&app.pool, 10)
+        .await
+        .expect("recover expired schedules");
+    assert!(recovered.contains(&expired_schedule));
+    let expired_run_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM test_runs WHERE schedule_id = $1")
+            .bind(expired_schedule)
+            .fetch_one(&app.pool)
+            .await
+            .expect("expired run count");
+    assert_eq!(expired_run_count, 0);
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn fair_run_claims_enforce_global_and_project_quotas_and_leases() {
+    let Some(app) = TestQueue::setup().await else {
+        return;
+    };
+    let job_id = app.seed_job("quota").await;
+    let first_run = app.seed_due_run(job_id).await;
+    let second_job_id = app.seed_job("quota-two").await;
+    let second_run = app.seed_due_run(second_job_id).await;
+    promote_due_runs(&app.pool, 10)
+        .await
+        .expect("promote quota runs");
+
+    let first = claim_due_run_fair(&app.pool, "execution-a", 60, 2, 1)
+        .await
+        .expect("first fair claim")
+        .expect("first run");
+    assert!(first_run == first.id || second_run == first.id);
+    assert!(
+        claim_due_run_fair(&app.pool, "execution-b", 60, 2, 1)
+            .await
+            .expect("per-project quota claim")
+            .is_none(),
+        "a second run from the same project bypassed the per-project quota"
+    );
+
+    assert!(
+        heartbeat_run(&app.pool, first.id, "execution-a", 60)
+            .await
+            .expect("heartbeat")
+            .is_some()
+    );
+    assert!(
+        heartbeat_run(&app.pool, first.id, "execution-b", 60)
+            .await
+            .expect("wrong worker heartbeat")
+            .is_none()
+    );
+    assert!(
+        !complete_run(&app.pool, first.id, "execution-b")
+            .await
+            .expect("stale completion")
+    );
+    assert!(
+        complete_run(&app.pool, first.id, "execution-a")
+            .await
+            .expect("completion")
+    );
+
+    let second = claim_due_run_fair(&app.pool, "execution-b", 60, 2, 1)
+        .await
+        .expect("second claim")
+        .expect("second run");
+    assert_ne!(first.id, second.id);
+    assert!(
+        complete_run(&app.pool, second.id, "execution-b")
+            .await
+            .expect("second completion")
+    );
+
+    let third_job_id = app.seed_job("quota-three").await;
+    let fourth_job_id = app.seed_job("quota-four").await;
+    let third_run = app.seed_due_run(third_job_id).await;
+    let fourth_run = app.seed_due_run(fourth_job_id).await;
+    promote_due_runs(&app.pool, 10)
+        .await
+        .expect("promote global quota runs");
+    let global_first = claim_due_run_fair(&app.pool, "execution-c", 60, 1, 2)
+        .await
+        .expect("global first")
+        .expect("global first run");
+    assert!(third_run == global_first.id || fourth_run == global_first.id);
+    assert!(
+        claim_due_run_fair(&app.pool, "execution-d", 60, 1, 2)
+            .await
+            .expect("global quota claim")
+            .is_none(),
+        "a second run bypassed the global concurrency quota"
+    );
+
+    expire_run_lease(&app.pool, global_first.id, 5).await;
+    let recovered = recover_expired_run_leases(&app.pool, 10)
+        .await
+        .expect("recover run lease");
+    assert_eq!(recovered, vec![global_first.id]);
+    let recovered_status: String = sqlx::query_scalar("SELECT status FROM test_runs WHERE id = $1")
+        .bind(global_first.id)
+        .fetch_one(&app.pool)
+        .await
+        .expect("recovered status");
+    assert_eq!(recovered_status, "queued");
+    assert!(
+        !complete_run(&app.pool, global_first.id, "execution-c")
+            .await
+            .expect("stale completed")
+    );
+    assert_eq!(
+        fail_run(&app.pool, global_first.id, "execution-c", "stale", true)
+            .await
+            .expect("stale failure"),
+        FailOutcome::LeaseLost
+    );
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn aggregate_run_metrics_are_persisted_and_upserted() {
+    let Some(app) = TestQueue::setup().await else {
+        return;
+    };
+    let job_id = app.seed_job("metrics").await;
+    let run_id = app.seed_due_run(job_id).await;
+    let started_at = Utc::now();
+    let finished_at = started_at + ChronoDuration::seconds(10);
+    let mut metrics = RunMetrics {
+        started_at,
+        finished_at,
+        bucket_seconds: 10,
+        buckets: vec![MetricBucket {
+            bucket_start: started_at,
+            bucket_seconds: 10,
+            endpoint: "baseline".to_owned(),
+            status_code: 200,
+            request_count: 1,
+            error_count: 0,
+            latency_p50_ms: 10.0,
+            latency_p95_ms: 10.0,
+            latency_p99_ms: 10.0,
+            throughput_rps: 0.1,
+            response_bytes: 100,
+        }],
+        summary: RunSummary {
+            request_count: 1,
+            error_count: 0,
+            timeout_count: 0,
+            dropped_iterations: 0,
+            latency_p50_ms: 10.0,
+            latency_p95_ms: 10.0,
+            latency_p99_ms: 10.0,
+            throughput_rps: 0.1,
+            response_bytes: 100,
+        },
+    };
+    persist_metrics(&app.pool, app.project_id, run_id, &metrics)
+        .await
+        .expect("persist metrics");
+    let (count, requests): (i64, i64) = sqlx::query_as(
+        "SELECT count(*), COALESCE(sum(request_count), 0)::bigint FROM run_metrics WHERE run_id = $1",
+    )
+    .bind(run_id)
+    .fetch_one(&app.pool)
+    .await
+    .expect("metrics read");
+    assert_eq!(count, 1);
+    assert_eq!(requests, 1);
+
+    metrics.buckets[0].request_count = 2;
+    metrics.buckets[0].error_count = 1;
+    persist_metrics(&app.pool, app.project_id, run_id, &metrics)
+        .await
+        .expect("upsert metrics");
+    let (requests, errors): (i64, i64) = sqlx::query_as(
+        "SELECT COALESCE(sum(request_count), 0)::bigint, COALESCE(sum(error_count), 0)::bigint
+         FROM run_metrics WHERE run_id = $1",
+    )
+    .bind(run_id)
+    .fetch_one(&app.pool)
+    .await
+    .expect("metrics upsert read");
+    assert_eq!(requests, 2);
+    assert_eq!(errors, 1);
 
     app.cleanup().await;
 }

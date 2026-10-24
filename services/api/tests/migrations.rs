@@ -223,6 +223,32 @@ async fn migrations_create_and_enforce_core_schema() {
         "migration 0011 did not add load safety constraints"
     );
 
+    let load_execution_columns: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM information_schema.columns
+         WHERE table_schema = current_schema() AND table_name = 'schedules'
+           AND column_name IN ('target_authorization_id', 'expires_at', 'cancelled_at')",
+    )
+    .fetch_one(&schema_pool)
+    .await
+    .expect("load execution column lookup");
+    assert_eq!(
+        load_execution_columns, 3,
+        "migration 0012 did not add schedule execution columns"
+    );
+
+    let load_execution_constraints: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_constraint
+         WHERE conrelid = 'schedules'::regclass
+           AND conname IN ('schedules_recurrence_values', 'schedules_expiry_order')",
+    )
+    .fetch_one(&schema_pool)
+    .await
+    .expect("load execution constraint lookup");
+    assert_eq!(
+        load_execution_constraints, 2,
+        "migration 0012 did not add schedule execution constraints"
+    );
+
     let approval_run_constraint: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_constraint
          WHERE connamespace = current_schema()::regnamespace
@@ -514,7 +540,7 @@ async fn seed_complete_fixture(pool: &PgPool) {
                 '66666666-6666-4666-8666-666666666666'::uuid,
                 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'::uuid,
                 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'::uuid,
-                'UTC', '0 * * * *', true, now() + interval '1 hour',
+                'UTC', 'hourly', true, now() + interval '1 hour',
                 '11111111-1111-4111-8111-111111111111'::uuid)
         "#,
         r#"

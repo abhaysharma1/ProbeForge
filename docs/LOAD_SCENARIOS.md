@@ -6,8 +6,9 @@ cannot create executable scripts, loops, or raw credentials. No load test is run
 in this phase.
 
 > **Status:** scenario generation, validation, review, and approval pinning are
-> implemented. The k6 runner, scheduling, metrics, and cancellation belong to
-> Phase 12.
+> implemented. The constrained runner, scheduling, metrics, leases, quotas, and
+> cancellation are implemented in Phase 12 — see
+> [LOAD_EXECUTION.md](LOAD_EXECUTION.md).
 
 ## Declarative contract
 

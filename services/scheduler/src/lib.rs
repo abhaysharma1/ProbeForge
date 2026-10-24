@@ -202,12 +202,36 @@ async fn scheduler_loop(pool: PgPool, interval: Duration) {
     loop {
         ticker.tick().await;
 
+        match probe_forge_queue::recover_expired_schedules(&pool, 50).await {
+            Ok(schedules) if !schedules.is_empty() => {
+                tracing::info!(count = schedules.len(), "disabled expired schedules");
+            }
+            Ok(_) => {}
+            Err(error) => tracing::warn!(error = %error, "expired schedule recovery failed"),
+        }
+
+        match probe_forge_queue::promote_due_schedules(&pool, 50).await {
+            Ok(runs) if !runs.is_empty() => {
+                tracing::info!(count = runs.len(), "promoted due schedules");
+            }
+            Ok(_) => {}
+            Err(error) => tracing::warn!(error = %error, "due schedule promotion failed"),
+        }
+
         match probe_forge_queue::promote_due_runs(&pool, 50).await {
             Ok(runs) if !runs.is_empty() => {
                 tracing::info!(count = runs.len(), "promoted due scheduled runs");
             }
             Ok(_) => {}
             Err(error) => tracing::warn!(error = %error, "due-run promotion failed"),
+        }
+
+        match probe_forge_queue::recover_expired_run_leases(&pool, 50).await {
+            Ok(runs) if !runs.is_empty() => {
+                tracing::info!(count = runs.len(), "recovered expired run leases");
+            }
+            Ok(_) => {}
+            Err(error) => tracing::warn!(error = %error, "expired run lease recovery failed"),
         }
 
         match probe_forge_queue::recover_expired_job_leases(&pool, 50).await {

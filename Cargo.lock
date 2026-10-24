@@ -1304,6 +1304,7 @@ name = "probe-forge-execution-worker"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "probe-forge-load-runner",
  "serde",
  "serde_json",
  "thiserror",
@@ -1315,10 +1316,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "probe-forge-load-runner"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "probe-forge-target-policy",
+ "probeforge-contracts",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "probe-forge-queue"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "probe-forge-load-runner",
  "serde_json",
  "sqlx",
  "thiserror",

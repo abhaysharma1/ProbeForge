@@ -8,6 +8,10 @@ use tracing::info;
 
 pub const SERVICE_NAME: &str = "probe-forge-execution-worker";
 
+/// The constrained load-runner library is owned by the execution worker. The
+/// service remains health-only until an authenticated dispatcher is wired.
+pub use probe_forge_load_runner as load_runner;
+
 const DEFAULT_BIND_ADDR: &str = "127.0.0.1:8082";
 const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);

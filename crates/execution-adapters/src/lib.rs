@@ -458,6 +458,18 @@ fn request_failure(spec: &'static AdapterSpec, error: TargetRequestError) -> Ada
             "invalid_adapter_header",
             "The adapter attempted to send a disallowed request header.",
         ),
+        TargetRequestError::RequestBodyTooLarge => failure_result(
+            spec,
+            ExecutionStatus::Failed,
+            "request_body_too_large",
+            "The adapter request exceeded the platform body cap.",
+        ),
+        TargetRequestError::RequestTimeout => failure_result(
+            spec,
+            ExecutionStatus::TimedOut,
+            "request_timeout",
+            "The target request timed out.",
+        ),
         TargetRequestError::Network => failure_result(
             spec,
             ExecutionStatus::Failed,

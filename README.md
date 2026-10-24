@@ -11,12 +11,12 @@ The AI agent (Pi) inspects a pinned commit of the user's repository and proposes
 
 ## Status
 
-**Phase 11 - Load scenario generation and validation: complete.** See the [phase report](docs/phases/11_load_scenarios_report.md).
+**Phase 12 - Load runner and scheduler: complete.** See the [phase report](docs/phases/12_load_runner_scheduler_report.md).
 
-- Next permitted phase: **Phase 12 - Load runner and scheduler** (starts only after explicit authorization).
+- Next permitted phase: **Phase 13 - Results, AI recommendations, and reports** (starts only after explicit authorization).
 - Phase tasks and exit gates: [docs/IMPLEMENTATION_CHECKLIST.md](docs/IMPLEMENTATION_CHECKLIST.md)
 - Decisions, interpretations, and open questions: [docs/DECISION_LOG.md](docs/DECISION_LOG.md)
-- Contract details: [docs/CONTRACTS.md](docs/CONTRACTS.md) · Database details: [docs/DATABASE.md](docs/DATABASE.md) · Authentication and RBAC: [docs/AUTH.md](docs/AUTH.md) · Jobs and queue: [docs/JOBS.md](docs/JOBS.md) · Read-only ingestion: [docs/REPOSITORY_INGESTION.md](docs/REPOSITORY_INGESTION.md) · Static discovery: [docs/DISCOVERY.md](docs/DISCOVERY.md) · Pi planning: [docs/PLANNING.md](docs/PLANNING.md) · Plan approval: [docs/PLAN_APPROVAL.md](docs/PLAN_APPROVAL.md) · Target validation: [docs/TARGET_VALIDATION.md](docs/TARGET_VALIDATION.md) · Execution adapters: [docs/EXECUTION_ADAPTERS.md](docs/EXECUTION_ADAPTERS.md) · Load scenarios: [docs/LOAD_SCENARIOS.md](docs/LOAD_SCENARIOS.md)
+- Contract details: [docs/CONTRACTS.md](docs/CONTRACTS.md) · Database details: [docs/DATABASE.md](docs/DATABASE.md) · Authentication and RBAC: [docs/AUTH.md](docs/AUTH.md) · Jobs and queue: [docs/JOBS.md](docs/JOBS.md) · Read-only ingestion: [docs/REPOSITORY_INGESTION.md](docs/REPOSITORY_INGESTION.md) · Static discovery: [docs/DISCOVERY.md](docs/DISCOVERY.md) · Pi planning: [docs/PLANNING.md](docs/PLANNING.md) · Plan approval: [docs/PLAN_APPROVAL.md](docs/PLAN_APPROVAL.md) · Target validation: [docs/TARGET_VALIDATION.md](docs/TARGET_VALIDATION.md) · Execution adapters: [docs/EXECUTION_ADAPTERS.md](docs/EXECUTION_ADAPTERS.md) · Load scenarios: [docs/LOAD_SCENARIOS.md](docs/LOAD_SCENARIOS.md) · Load execution: [docs/LOAD_EXECUTION.md](docs/LOAD_EXECUTION.md)
 - Phase reports: [docs/phases/](docs/phases/)
 
 ## Architecture at a glance
@@ -33,7 +33,7 @@ PostgreSQL  <- durable source of truth and initial job queue (leases, heartbeats
     +-- analysis worker (TypeScript + Pi SDK)   read-only repository inspection, planning
     +-- scheduler / dispatcher                  due runs, leases, cancellation
     +-- security execution worker               approved catalog adapters only
-    +-- load execution worker                   k6 behind hard caps, isolated from the API
+    +-- load execution worker                   constrained load runner behind hard caps, isolated from the API
 ```
 
 Boundaries that must not be crossed:
@@ -129,15 +129,17 @@ Stop PostgreSQL with `bun run db:down`.
 - Authenticated `POST /api/jobs?projectId=...` still creates queued vulnerability-testing or load-testing jobs from the versioned `jobCreation` contract. Owner, admin, and collaborator roles may create/cancel; viewers are read-only. A concrete source reference is required, so no unresolvable job is enqueued. `Idempotency-Key` returns the existing job for an identical retry and returns `409` when reused for a different payload.
 - The shared `crates/queue` uses `FOR UPDATE SKIP LOCKED`, commits claims before processing, and enforces worker leases, heartbeats, fencing, bounded exponential retries, and stale-lease recovery.
 - Ordered `job_events` drive SSE. `Last-Event-ID`/`after` replay is implemented, with `follow=false` for a finite replay stream and safe `stream.error` events on database failure.
-- The scheduler owns a PostgreSQL pool, reports database-aware readiness, promotes due scheduled runs to queued, and recovers expired job leases. Due-run claim logic is implemented and tested for the future execution dispatcher.
+- The scheduler owns a PostgreSQL pool, reports database-aware readiness, expires and promotes due schedules, promotes due scheduled runs to queued, and recovers expired run/job leases. Fair due-run claim logic with global/per-project quotas and worker leases is implemented and tested for the future execution dispatcher.
 - Pi planning is implemented as an analysis-worker library (`services/analysis-worker/src/agent/`) with a constrained read-only/proposal tool registry, strict v1 validation, deterministic fallback, and a narrow PostgreSQL plan writer. It consumes the Phase 5 snapshot and Phase 6 inventory, and the control plane now exposes authenticated plan review/approval APIs. It is still not wired to an authenticated worker claim/dispatch path; the worker HTTP surface remains health-only.
-- Plans can be reviewed, selected, and approved with an immutable snapshot. Targets can be registered, validated against server-owned URL/DNS/IP policy, and authorized for a bounded time window. Run creation, dispatch, and reporting remain absent (Phases 12-13).
-- Target management is API-only for now; there is no target registration or authorization UI. The guarded HTTP client and run budget are used by the Phase 10 native adapters, but no real scan or load test is executed.
+- Plans can be reviewed, selected, and approved with an immutable snapshot. Targets can be registered, validated against server-owned URL/DNS/IP policy, and authorized for a bounded time window. Run creation and dispatch remain absent; reporting is Phase 13.
+- Target management is API-only for now; there is no target registration or authorization UI. The guarded HTTP client and run budget are used by the Phase 10 native adapters and the Phase 12 load runner, but no real scan or load test is executed.
 - The catalog contains inert entries (catalog 0.2.0). Only `http.headers.missing` and `http.cors.misconfiguration` have vetted native adapters (`http_probe` 0.1.0); every other entry is reported unavailable. Approval records the selected test set and does not start a run.
 - The Phase 10 adapter library (`crates/execution-adapters`) returns normalized, sanitized in-memory results. It is not dispatched by the worker, not persisted, and has no UI. No shell or external executable is used.
-- Phase 11 load scenarios are ordered, correlated, data-only steps with secret-backed headers, extraction/assertion rules, explicit statuses, and platform-capped profiles. They can be generated and approved without sending traffic. There is no k6 runner, schedule execution, metrics collection, or load UI beyond plan review; Phase 12 owns those.
+- Phase 11 load scenarios are ordered, correlated, data-only steps with secret-backed headers, extraction/assertion rules, explicit statuses, and platform-capped profiles. They can be generated and approved without sending traffic.
+- Phase 12 adds a constrained native load runner (`crates/load-runner`) that executes a typed `RunnerSpec` under hard caps with extraction/assertion rules, correlation, metrics, stop conditions, and cancellation. k6 is not installed or invoked; a future adapter must consume the same spec behind a pinned process boundary. The execution worker stays health-only, so no API or UI starts live traffic yet.
+- Schedules persist a normalized timezone and a UTC `next_run_at`, are promoted idempotently per occurrence, and require an explicit active target authorization. Schedule creation is a server library operation; there is no schedule API or UI yet.
 - Load scenarios are versioned by their parent plan version. Approval revalidates selected scenarios and pins the exact JSON/profile in the immutable snapshot; there is no independent scenario-edit endpoint.
-- Target-scope validation for load paths is implemented as a pure library function (`validate_load_scenario_scope`). Run creation must call it in Phase 12 before any traffic.
+- Target-scope validation for load paths is called by the Phase 12 runner before any traffic; extracted values are percent-encoded before substitution.
 - The web app now shows analysis jobs and a focused plan review, but there is still no job creation UI. Jobs are created through the API and plans must come from the worker/seed data until the authenticated job path is completed.
 - Versioned v1 contracts now include `job.claimed` and `job.retry_scheduled` events; catalog entries are populated and validated in TypeScript and Rust.
 - All services bind to loopback by default.

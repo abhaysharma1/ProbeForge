@@ -329,25 +329,34 @@ Legend: `[x]` done with evidence - `[ ]` not done.
 
 ## Phase 12 — Load runner and scheduler
 
-**Status:** Not started
+**Status:** Complete - [report](phases/12_load_runner_scheduler_report.md)
 
 **Tasks**
 
-- [ ] Integrate k6 through a constrained adapter or generated vetted scenario representation
-- [ ] Use fixed templates and validated parameters; do not generate arbitrary executable scripts from model text
-- [ ] Persist schedules with explicit time zone semantics and a UTC execution timestamp
-- [ ] Add worker leases, concurrency quotas, per-project fairness, and schedule cancellation
-- [ ] Enforce maximum VUs or arrival rate, duration, ramp-up, request count, and response sizes
-- [ ] Persist aggregate time-series buckets and endpoint summaries
-- [ ] Capture latency percentiles, throughput, errors, timeouts, and dropped iterations where supported
-- [ ] Stop when the deadline, budget, or cancellation condition is reached
+- [x] Integrate k6 through a constrained adapter or generated vetted scenario representation - generated data-only `RunnerSpec` from the validated scenario, executed by a constrained native adapter; no arbitrary scripts are produced from model text. k6 is not installed and no external binary is invoked.
+- [x] Use fixed templates and validated parameters; do not generate arbitrary executable scripts from model text - typed `RunnerStep` templates, closed extraction/assertion rules, percent-encoded path substitution, 64 KiB body cap
+- [x] Persist schedules with explicit time zone semantics and a UTC execution timestamp - migration `0012`, `create_schedule`, normalized `UTC`/fixed-offset timezone, `next_run_at` always UTC
+- [x] Add worker leases, concurrency quotas, per-project fairness, and schedule cancellation - `claim_due_run_fair` (advisory-locked global/per-project quotas), `heartbeat_run`, `complete_run`, `fail_run`, `recover_expired_run_leases`, `cancel_schedule`
+- [x] Enforce maximum VUs or arrival rate, duration, ramp-up, request count, and response sizes - `resolve_limits` takes the minimum of profile, target authorization, and platform caps; `RunBudget` repeats the caps at the network boundary
+- [x] Persist aggregate time-series buckets and endpoint summaries - `run_metrics` upsert per bucket/endpoint/status
+- [x] Capture latency percentiles, throughput, errors, timeouts, and dropped iterations where supported - `aggregate_metrics` and `RunSummary`
+- [x] Stop when the deadline, budget, or cancellation condition is reached - `RunBudget` deadline/request/cancel plus closed stop conditions
 
 **Exit gate**
 
-- [ ] Scheduler tests verify due, future, cancelled, and expired schedules
-- [ ] Load runner tests use a local mock server only
-- [ ] Metrics calculations are validated against known fixture data
-- [ ] Hard caps cannot be bypassed by a scenario or model output
+- [x] Scheduler tests verify due, future, cancelled, and expired schedules - queue/scheduler integration test
+- [x] Load runner tests use a local mock server only - loopback mock HTTP server
+- [x] Metrics calculations are validated against known fixture data - deterministic percentile/bucket fixture
+- [x] Hard caps cannot be bypassed by a scenario or model output - policy minimum-of-all-sources tests and `NOT VALID` database checks
+
+**Evidence**
+
+- Runner/policy/metrics: `crates/load-runner/src/`
+- Queue/scheduler persistence: `crates/queue/src/lib.rs`, `crates/queue/tests/queue.rs`
+- Scheduler loop: `services/scheduler/src/lib.rs`
+- Migration: `migrations/0012_load_execution.sql`
+- Target-boundary request path: `crates/target-policy/src/lib.rs`
+- Report: `docs/phases/12_load_runner_scheduler_report.md`
 
 ## Phase 13 — Results, AI recommendations, and reports
 

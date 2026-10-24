@@ -33,6 +33,7 @@ pub const DEFAULT_AUTHORIZATION_TTL: Duration = Duration::from_secs(24 * 60 * 60
 pub const MAX_AUTHORIZATION_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 pub const MAX_RESPONSE_BYTES: u64 = 2 * 1024 * 1024;
 pub const MAX_TOTAL_BYTES: u64 = 16 * 1024 * 1024;
+pub const MAX_REQUEST_BODY_BYTES: usize = 64 * 1024;
 pub const MAX_REDIRECTS: usize = 5;
 pub const MAX_ALLOWED_PATHS: usize = 50;
 pub const MAX_ALLOWED_HOSTS: usize = 20;
@@ -859,10 +860,14 @@ pub enum TargetRequestError {
     Cancelled,
     #[error("request failed at the network boundary")]
     Network,
+    #[error("request timed out")]
+    RequestTimeout,
     #[error("request destination is not allowed")]
     Validation(TargetValidationError),
     #[error("request headers are not allowed")]
     InvalidHeader,
+    #[error("request body exceeds the platform cap")]
+    RequestBodyTooLarge,
 }
 
 impl TargetRequestError {
@@ -874,8 +879,10 @@ impl TargetRequestError {
             Self::TotalBytesExceeded => "total_data_budget_exhausted",
             Self::Cancelled => "cancelled",
             Self::Network => "network_error",
+            Self::RequestTimeout => "request_timeout",
             Self::Validation(error) => error.code(),
             Self::InvalidHeader => "invalid_adapter_header",
+            Self::RequestBodyTooLarge => "request_body_too_large",
         }
     }
 }
@@ -1038,6 +1045,11 @@ impl RunBudget {
 pub enum SafeMethod {
     Get,
     Head,
+    Post,
+    Put,
+    Patch,
+    Delete,
+    Options,
 }
 
 impl SafeMethod {
@@ -1045,6 +1057,11 @@ impl SafeMethod {
         match self {
             Self::Get => reqwest::Method::GET,
             Self::Head => reqwest::Method::HEAD,
+            Self::Post => reqwest::Method::POST,
+            Self::Put => reqwest::Method::PUT,
+            Self::Patch => reqwest::Method::PATCH,
+            Self::Delete => reqwest::Method::DELETE,
+            Self::Options => reqwest::Method::OPTIONS,
         }
     }
 }
@@ -1069,14 +1086,47 @@ const SENSITIVE_HEADERS: &[&str] = &[
     "connection",
 ];
 
+fn map_reqwest_error(error: reqwest::Error) -> TargetRequestError {
+    if error.is_timeout() {
+        TargetRequestError::RequestTimeout
+    } else {
+        TargetRequestError::Network
+    }
+}
+
 fn sanitize_headers(headers: &HeaderMap) -> Result<HeaderMap, TargetRequestError> {
+    sanitize_headers_with_credentials(headers, false)
+}
+
+fn sanitize_load_headers(headers: &HeaderMap) -> Result<HeaderMap, TargetRequestError> {
+    sanitize_headers_with_credentials(headers, true)
+}
+
+fn sanitize_headers_with_credentials(
+    headers: &HeaderMap,
+    allow_credentials: bool,
+) -> Result<HeaderMap, TargetRequestError> {
     if headers.len() > 20 {
         return Err(TargetRequestError::InvalidHeader);
     }
     let mut sanitized = HeaderMap::new();
     for (name, value) in headers {
         let name_lower = name.as_str().to_ascii_lowercase();
-        if SENSITIVE_HEADERS.contains(&name_lower.as_str()) {
+        let forbidden = if allow_credentials {
+            matches!(
+                name_lower.as_str(),
+                "proxy-authorization"
+                    | "set-cookie"
+                    | "host"
+                    | "content-length"
+                    | "transfer-encoding"
+                    | "connection"
+                    | "keep-alive"
+            )
+        } else {
+            SENSITIVE_HEADERS.contains(&name_lower.as_str())
+        };
+        if forbidden {
             return Err(TargetRequestError::InvalidHeader);
         }
         if value.as_bytes().len() > 1_024
@@ -1093,6 +1143,7 @@ fn sanitize_headers(headers: &HeaderMap) -> Result<HeaderMap, TargetRequestError
     Ok(sanitized)
 }
 
+#[derive(Clone)]
 pub struct GuardedHttpClient {
     policy: TargetPolicy,
     resolver: Arc<dyn TargetResolver>,
@@ -1121,7 +1172,7 @@ impl GuardedHttpClient {
         budget: &RunBudget,
     ) -> Result<GuardedResponse, TargetRequestError> {
         let headers = sanitize_headers(headers)?;
-        self.execute(guard, SafeMethod::Get, url, &headers, budget)
+        self.execute(guard, SafeMethod::Get, url, &headers, None, budget)
             .await
     }
 
@@ -1131,7 +1182,28 @@ impl GuardedHttpClient {
         url: &Url,
         budget: &RunBudget,
     ) -> Result<GuardedResponse, TargetRequestError> {
-        self.execute(guard, SafeMethod::Head, url, &HeaderMap::new(), budget)
+        let headers = sanitize_headers(&HeaderMap::new())?;
+        self.execute(guard, SafeMethod::Head, url, &headers, None, budget)
+            .await
+    }
+
+    /// Execute a validated load-runner request. This is the only client path
+    /// that permits resolved credential headers; callers must resolve them from
+    /// a server-owned secret provider and must never log them.
+    pub async fn load_request(
+        &self,
+        guard: &TargetGuard,
+        method: SafeMethod,
+        url: &Url,
+        headers: &HeaderMap,
+        request_body: Option<&[u8]>,
+        budget: &RunBudget,
+    ) -> Result<GuardedResponse, TargetRequestError> {
+        if request_body.is_some_and(|body| body.len() > MAX_REQUEST_BODY_BYTES) {
+            return Err(TargetRequestError::RequestBodyTooLarge);
+        }
+        let headers = sanitize_load_headers(headers)?;
+        self.execute(guard, method, url, &headers, request_body, budget)
             .await
     }
 
@@ -1141,6 +1213,7 @@ impl GuardedHttpClient {
         method: SafeMethod,
         url: &Url,
         headers: &HeaderMap,
+        request_body: Option<&[u8]>,
         budget: &RunBudget,
     ) -> Result<GuardedResponse, TargetRequestError> {
         let remaining = budget.remaining();
@@ -1149,7 +1222,7 @@ impl GuardedHttpClient {
         }
         tokio::time::timeout(
             remaining,
-            self.execute_redirects(guard, method, url, headers, budget),
+            self.execute_redirects(guard, method, url, headers, request_body, budget),
         )
         .await
         .map_err(|_| TargetRequestError::DurationExceeded)?
@@ -1161,6 +1234,7 @@ impl GuardedHttpClient {
         method: SafeMethod,
         url: &Url,
         headers: &HeaderMap,
+        request_body: Option<&[u8]>,
         budget: &RunBudget,
     ) -> Result<GuardedResponse, TargetRequestError> {
         let mut current = url.clone();
@@ -1187,12 +1261,15 @@ impl GuardedHttpClient {
                 builder = builder.resolve_to_addrs(&resolved.host, &addresses);
             }
             let client = builder.build().map_err(|_| TargetRequestError::Network)?;
-            let request = client
+            let mut request = client
                 .request(method.as_reqwest(), current.clone())
                 .headers(headers.clone());
+            if let Some(request_body) = request_body {
+                request = request.body(request_body.to_vec());
+            }
             let response = tokio::select! {
                 _ = budget.cancelled() => return Err(TargetRequestError::Cancelled),
-                result = request.send() => result.map_err(|_| TargetRequestError::Network)?,
+                result = request.send() => result.map_err(map_reqwest_error)?,
             };
 
             if response.status().is_redirection() {
@@ -1225,7 +1302,7 @@ impl GuardedHttpClient {
             loop {
                 let chunk = tokio::select! {
                     _ = budget.cancelled() => return Err(TargetRequestError::Cancelled),
-                    result = response.chunk() => result.map_err(|_| TargetRequestError::Network)?,
+                    result = response.chunk() => result.map_err(map_reqwest_error)?,
                 };
                 let Some(chunk) = chunk else {
                     break;

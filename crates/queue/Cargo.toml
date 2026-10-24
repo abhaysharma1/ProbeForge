@@ -15,4 +15,5 @@ thiserror.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+probe-forge-load-runner.workspace = true
 tokio.workspace = true
