@@ -252,6 +252,14 @@ async fn create_target(
     .map_err(ApiError::database)?;
     transaction.commit().await.map_err(ApiError::database)?;
 
+    tracing::info!(
+        event = "target.created",
+        target_id = %row.id,
+        project_id = %row.project_id,
+        user_id = %context.user.id,
+        environment = %row.environment,
+        "target registered"
+    );
     Ok((StatusCode::CREATED, Json(target_dto(&row)?)))
 }
 
@@ -403,6 +411,15 @@ async fn create_authorization(
     .map_err(ApiError::database)?;
     transaction.commit().await.map_err(ApiError::database)?;
 
+    tracing::info!(
+        event = "target.authorization_created",
+        authorization_id = %authorization.id,
+        target_id = %row.id,
+        project_id = %row.project_id,
+        user_id = %context.user.id,
+        expires_at = %expires_at,
+        "target authorization created"
+    );
     Ok((
         StatusCode::CREATED,
         Json(authorization_dto(authorization, now)?),
@@ -481,6 +498,14 @@ async fn revoke_authorization(
     .map_err(ApiError::database)?;
     transaction.commit().await.map_err(ApiError::database)?;
 
+    tracing::info!(
+        event = "target.authorization_revoked",
+        authorization_id = %authorization_id,
+        target_id = %target_id,
+        project_id = %project_id,
+        user_id = %context.user.id,
+        "target authorization revoked"
+    );
     Ok(Json(authorization_dto(authorization, now)?))
 }
 
@@ -609,6 +634,15 @@ async fn persist_verified_validation(
     )
     .await
     .map_err(ApiError::database)?;
+    tracing::info!(
+        event = "target.validated",
+        target_id = %row.id,
+        project_id = %row.project_id,
+        source,
+        address_count = destination.addresses.len(),
+        addresses_changed = changed,
+        "target destination validated"
+    );
     transaction.commit().await.map_err(ApiError::database)
 }
 
@@ -644,6 +678,13 @@ async fn persist_failed_validation(
     )
     .await
     .map_err(ApiError::database)?;
+    tracing::warn!(
+        event = "target.validation_failed",
+        target_id = %row.id,
+        project_id = %row.project_id,
+        error_code = error.code(),
+        "target destination validation failed"
+    );
     transaction.commit().await.map_err(ApiError::database)
 }
 
@@ -752,6 +793,11 @@ fn require_target_writer(role: ProjectRole) -> Result<(), ApiError> {
     if role.can_manage_targets() {
         Ok(())
     } else {
+        tracing::warn!(
+            event = "target.write_forbidden",
+            role = ?role,
+            "target management denied: insufficient project role"
+        );
         Err(ApiError::forbidden(
             "forbidden",
             "You do not have permission to manage targets in this project.",

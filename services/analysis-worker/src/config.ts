@@ -3,6 +3,7 @@ import {
   type PlanningLimits,
   validatePlanningLimits,
 } from "./agent/limits";
+import { type LogFormat, type LogLevel, parseLogFormat, parseLogLevel } from "./logging/logger";
 import {
   DEFAULT_INGESTION_LIMITS,
   type IngestionLimits,
@@ -30,6 +31,10 @@ export interface WorkerConfig {
   /** Background job loop: claim queued jobs and produce a draft plan. */
   readonly jobLoop: boolean;
   readonly jobLoopIntervalMs: number;
+  /** Minimum emitted log level (`PROBE_FORGE_LOG_LEVEL`, default `info`). */
+  readonly logLevel: LogLevel;
+  /** `json` (default) or `text` (`PROBE_FORGE_LOG_FORMAT`). */
+  readonly logFormat: LogFormat;
 }
 
 export class WorkerConfigError extends Error {
@@ -75,6 +80,28 @@ function readBoolean(
   if (raw === "true" || raw === "1") return true;
   if (raw === "false" || raw === "0") return false;
   throw new WorkerConfigError(`${name} must be true or false`);
+}
+
+function readLogLevel(env: Record<string, string | undefined>): LogLevel {
+  const raw = env.PROBE_FORGE_LOG_LEVEL;
+  if (raw === undefined || raw.trim().length === 0) return "info";
+  const level = parseLogLevel(raw);
+  if (level === null) {
+    throw new WorkerConfigError(
+      "PROBE_FORGE_LOG_LEVEL must be one of trace, debug, info, warn, error",
+    );
+  }
+  return level;
+}
+
+function readLogFormat(env: Record<string, string | undefined>): LogFormat {
+  const raw = env.PROBE_FORGE_LOG_FORMAT;
+  if (raw === undefined || raw.trim().length === 0) return "json";
+  const format = parseLogFormat(raw);
+  if (format === null) {
+    throw new WorkerConfigError("PROBE_FORGE_LOG_FORMAT must be json or text");
+  }
+  return format;
 }
 
 function readAllowedGitHosts(env: Record<string, string | undefined>): readonly string[] {
@@ -347,5 +374,7 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): W
       1_000,
       300_000,
     ),
+    logLevel: readLogLevel(env),
+    logFormat: readLogFormat(env),
   };
 }

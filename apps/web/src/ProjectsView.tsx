@@ -29,6 +29,7 @@ interface ProjectsViewProps {
   readonly csrfToken: string;
   readonly onSignOut: () => Promise<void>;
   readonly onSessionExpired: () => void;
+  readonly onOpenAdmin?: (() => void) | undefined;
 }
 
 const ROLE_LABELS: Record<ProjectRole, string> = {
@@ -114,7 +115,13 @@ function errorMessage(error: unknown): string {
     : "The request could not be completed. Check the API connection and try again.";
 }
 
-export function ProjectsView({ user, csrfToken, onSignOut, onSessionExpired }: ProjectsViewProps) {
+export function ProjectsView({
+  user,
+  csrfToken,
+  onSignOut,
+  onSessionExpired,
+  onOpenAdmin,
+}: ProjectsViewProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -436,6 +443,16 @@ export function ProjectsView({ user, csrfToken, onSignOut, onSessionExpired }: P
               <span aria-hidden="true" className="size-1.5 rounded-full bg-pf-accent" />
               Projects
             </div>
+            {onOpenAdmin ? (
+              <button
+                type="button"
+                onClick={onOpenAdmin}
+                className="mt-1 flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-[13px] font-medium text-pf-text-secondary transition-colors hover:bg-pf-surface-hover hover:text-pf-text"
+              >
+                <span aria-hidden="true" className="size-1.5 rounded-full bg-pf-border-strong" />
+                Platform admin
+              </button>
+            ) : null}
           </nav>
 
           <div className="mt-auto space-y-4">

@@ -412,6 +412,26 @@ Format per decision: status, context, decision, rationale, alternatives, impact.
 - **Alternatives:** Make the loops always-on (rejected: implicit execution in tests/CI); keep CLIs only (rejected: headless product); add HTTP trigger endpoints (rejected: long-running requests and a new authenticated surface).
 - **Impact:** `bun run dev` yields a working connect → analyze → approve → target → run → report flow. Continuous non-local operation still wants an external supervisor. See `docs/OPERATIONS.md`.
 
+### D-043 - One logging contract across libraries, services, and the analysis worker
+
+- **Date:** 2026-10-24
+- **Status:** Accepted
+- **Context:** Phase 14 added `crates/observability`, but logging was uneven: the API, scheduler, and execution worker emitted some events, while `crates/queue`, `crates/target-policy`, `crates/execution-adapters`, and `crates/load-runner` emitted none, the analysis worker had a single ad-hoc `console.log` in `index.ts`, and there was no shared level/field/event contract.
+- **Decision:** Adopt one logging contract (documented in `crates/observability` and `docs/OPERATIONS.md`): levels `error`/`warn`/`info`/`debug`; every line carries `service` and a stable `event` name plus the identifiers in scope (`request_id`, `project_id`, `job_id`, `run_id`, `worker_id`) and `error_code` on failures; values are redacted before emission. Library crates emit `tracing` events but never initialize a subscriber. The analysis worker gets a dependency-free `src/logging/logger.ts` that mirrors the Rust redaction and is configured by `PROBE_FORGE_LOG_LEVEL`/`PROBE_FORGE_LOG_FORMAT`.
+- **Rationale:** Correlated, greppable events are what make the incident runbook usable. Libraries that emit but do not initialize let a service own its subscriber while the reusable crates stay testable and side-effect-free. A hand-written worker logger avoids a new dependency (AGENTS.md) and keeps redaction parity with Rust.
+- **Alternatives:** Add a third-party JS logger (e.g. pino) (rejected: new dependency and duplicated redaction); instrument library well using a global exporter (rejected: libraries must not own global state); log full request/response bodies for detail (rejected: secret and evidence leakage).
+- **Impact:** Rust crates take a `tracing` dependency (already a workspace pin). The level of detail is bounded: hot paths log at `debug`, `info` is reserved for transitions and outcomes. No control flow depends on logging. See `docs/phases/14a_logging_hardening_report.md`.
+
+### D-043 - Platform admin is settings-only; secrets are encrypted at rest
+
+- **Date:** 2026-10-24
+- **Status:** Accepted
+- **Context:** Pi configuration and its API key were env-only, with no UI and no DB, and there is no platform-admin concept. The product needed an admin dashboard to configure all platform settings, including a provider API key.
+- **Decision:** Add migration `0015`: `platform_admins` (grants access to `/api/admin/*` only, no cross-tenant access) and a singleton `platform_settings` row holding planning provider/model/limits, an encrypted provider API key, API rate limits, retention windows, and project defaults. Provider keys are stored only as AES-256-GCM ciphertext (`v1.<nonce>.<ct>`) with the master key from `PROBE_FORGE_SETTINGS_KEY`; the API is write-only and returns only a hint. Seed a separate `admin@probeforge.local` via `seed-dev`. The analysis worker decrypts the key (mirroring the same envelope in TS) and passes it into the Pi `streamSimple` call; the request middleware reads a cached copy of the rate limits; the scheduler reads retention; the execution worker reads the default concurrency cap. Env remains the fallback, then the deterministic planner.
+- **Rationale:** Settings-only keeps the admin from becoming a cross-tenant superuser. Encrypting at rest with a key held only in the environment avoids storing plaintext secrets in the database while allowing dashboard configuration. Passing the key explicitly to `streamSimple` (confirmed supported) avoids mutating process env.
+- **Alternatives:** Cross-tenant superuser (rejected: large isolation change, not requested); env-only key (rejected: no dashboard configuration); plaintext key column (rejected); a new secret store (rejected: scope/dependency).
+- **Impact:** A master key is required to store a provider key (fails closed otherwise); the worker needs the same key to decrypt. Rate limits apply live; retention and default concurrency are read by their services. The frontend gains an **Admin** view visible only to platform admins. See `docs/OPERATIONS.md`.
+
 ## Open questions
 
 | ID | Question | Needed by | Notes |

@@ -273,6 +273,15 @@ pub async fn claim_job(
     )
     .await?;
     transaction.commit().await?;
+    tracing::debug!(
+        event = "job.claimed",
+        job_id = %claimed.id,
+        project_id = %claimed.project_id,
+        worker_id,
+        attempt = claimed.attempt,
+        lease_seconds,
+        "claimed queued job"
+    );
     Ok(Some(claimed))
 }
 
@@ -304,6 +313,14 @@ pub async fn heartbeat_job(
     .fetch_optional(pool)
     .await?;
 
+    if renewed.is_none() {
+        tracing::warn!(
+            event = "job.heartbeat_lost",
+            job_id = %job_id,
+            worker_id,
+            "job lease heartbeat lost; worker no longer owns an unexpired lease"
+        );
+    }
     Ok(renewed)
 }
 
@@ -343,6 +360,12 @@ pub async fn complete_job(
 
     let Some(completed) = completed else {
         transaction.rollback().await?;
+        tracing::warn!(
+            event = "job.lease_lost",
+            job_id = %job_id,
+            worker_id,
+            "job completion fenced out by a newer lease"
+        );
         return Ok(false);
     };
 
@@ -354,6 +377,13 @@ pub async fn complete_job(
     )
     .await?;
     transaction.commit().await?;
+    tracing::info!(
+        event = "job.awaiting_approval",
+        job_id = %completed,
+        worker_id,
+        plan_id = ?current_plan_id,
+        "job analysis completed and is awaiting approval"
+    );
     Ok(true)
 }
 
@@ -388,6 +418,12 @@ pub async fn fail_job(
 
     let Some(row) = row else {
         transaction.rollback().await?;
+        tracing::warn!(
+            event = "job.lease_lost",
+            job_id = %job_id,
+            worker_id,
+            "job failure fenced out by a newer lease"
+        );
         return Ok(FailOutcome::LeaseLost);
     };
 
@@ -423,6 +459,15 @@ pub async fn fail_job(
         )
         .await?;
         transaction.commit().await?;
+        tracing::warn!(
+            event = "job.retry_scheduled",
+            job_id = %job_id,
+            worker_id,
+            error_code,
+            attempt = row.attempt,
+            retry_at = %retry_at,
+            "job failed and was rescheduled with backoff"
+        );
         return Ok(FailOutcome::Retried {
             attempt: row.attempt,
             retry_at,
@@ -457,6 +502,14 @@ pub async fn fail_job(
     )
     .await?;
     transaction.commit().await?;
+    tracing::warn!(
+        event = "job.failed",
+        job_id = %job_id,
+        worker_id,
+        error_code,
+        attempt = row.attempt,
+        "job failed terminally"
+    );
     Ok(FailOutcome::Failed {
         attempt: row.attempt,
     })
@@ -551,6 +604,13 @@ pub async fn recover_expired_job_leases(
     }
 
     transaction.commit().await?;
+    if !recovered.is_empty() {
+        tracing::info!(
+            event = "jobs.lease_recovered",
+            count = recovered.len(),
+            "recovered expired job leases"
+        );
+    }
     Ok(recovered)
 }
 
@@ -630,6 +690,14 @@ pub async fn create_schedule(pool: &PgPool, input: NewSchedule) -> Result<Schedu
     .fetch_one(pool)
     .await?;
 
+    tracing::info!(
+        event = "schedule.created",
+        schedule_id = %row.id,
+        project_id = %row.project_id,
+        job_id = %row.job_id,
+        recurrence = %row.recurrence,
+        "load schedule created"
+    );
     Ok(row)
 }
 
@@ -696,6 +764,13 @@ pub async fn promote_due_schedules(
                 .bind(schedule.id)
                 .execute(&mut *transaction)
                 .await?;
+            tracing::info!(
+                event = "schedule.disabled",
+                schedule_id = %schedule.id,
+                project_id = %schedule.project_id,
+                reason = "ineligible",
+                "disabled a due schedule that is no longer eligible"
+            );
             continue;
         };
 
@@ -762,6 +837,13 @@ pub async fn promote_due_schedules(
     }
 
     transaction.commit().await?;
+    if !promoted.is_empty() {
+        tracing::info!(
+            event = "schedules.promoted",
+            count = promoted.len(),
+            "promoted due schedules into queued load runs"
+        );
+    }
     Ok(promoted)
 }
 
@@ -804,6 +886,13 @@ pub async fn recover_expired_schedules(pool: &PgPool, limit: i64) -> Result<Vec<
     .fetch_all(pool)
     .await?;
 
+    if !rows.is_empty() {
+        tracing::info!(
+            event = "schedules.expired_disabled",
+            count = rows.len(),
+            "disabled schedules whose expiry, authorization, or plan is no longer usable"
+        );
+    }
     Ok(rows)
 }
 
@@ -822,6 +911,11 @@ pub async fn cancel_schedule(pool: &PgPool, schedule_id: Uuid) -> Result<bool, Q
     .await?;
     if cancelled.is_none() {
         transaction.rollback().await?;
+        tracing::debug!(
+            event = "schedule.cancel_noop",
+            schedule_id = %schedule_id,
+            "schedule was already cancelled or missing"
+        );
         return Ok(false);
     }
 
@@ -834,6 +928,7 @@ pub async fn cancel_schedule(pool: &PgPool, schedule_id: Uuid) -> Result<bool, Q
     .bind(schedule_id)
     .fetch_all(&mut *transaction)
     .await?;
+    let cancelled_runs = runs.len();
     for (run_id, job_id) in runs {
         append_job_event(
             &mut transaction,
@@ -845,6 +940,12 @@ pub async fn cancel_schedule(pool: &PgPool, schedule_id: Uuid) -> Result<bool, Q
     }
 
     transaction.commit().await?;
+    tracing::info!(
+        event = "schedule.cancelled",
+        schedule_id = %schedule_id,
+        cancelled_runs,
+        "schedule cancelled; not-yet-running runs were cancelled"
+    );
     Ok(true)
 }
 
@@ -875,6 +976,13 @@ pub async fn promote_due_runs(pool: &PgPool, limit: i64) -> Result<Vec<PromotedR
     .fetch_all(pool)
     .await?;
 
+    if !rows.is_empty() {
+        tracing::info!(
+            event = "runs.promoted",
+            count = rows.len(),
+            "promoted due runs to queued"
+        );
+    }
     Ok(rows)
 }
 
@@ -938,6 +1046,16 @@ pub async fn claim_due_run(
     )
     .await?;
     transaction.commit().await?;
+    tracing::debug!(
+        event = "run.claimed",
+        run_id = %claimed.id,
+        job_id = %claimed.job_id,
+        project_id = %claimed.project_id,
+        run_type = %claimed.run_type,
+        worker_id,
+        attempt = claimed.attempt,
+        "claimed due run"
+    );
     Ok(Some(claimed))
 }
 
@@ -1025,6 +1143,13 @@ pub async fn set_project_quota(
     .bind(input.window_seconds)
     .fetch_one(pool)
     .await?;
+    tracing::info!(
+        event = "project.quota_updated",
+        project_id = %row.project_id,
+        max_active_runs = row.max_active_runs,
+        window_seconds = row.window_seconds,
+        "project quota updated"
+    );
     Ok(row)
 }
 
@@ -1308,14 +1433,25 @@ pub async fn run_retention(
 
     transaction.commit().await?;
 
-    Ok(RetentionOutcome {
+    let outcome = RetentionOutcome {
         evidence_deleted,
         reports_deleted,
         job_events_deleted,
         sessions_deleted,
         rate_limit_entries_deleted,
         login_attempt_entries_deleted,
-    })
+    };
+    tracing::info!(
+        event = "retention.purge",
+        evidence_deleted = outcome.evidence_deleted,
+        reports_deleted = outcome.reports_deleted,
+        job_events_deleted = outcome.job_events_deleted,
+        sessions_deleted = outcome.sessions_deleted,
+        rate_limit_entries_deleted = outcome.rate_limit_entries_deleted,
+        login_attempt_entries_deleted = outcome.login_attempt_entries_deleted,
+        "retention purge completed"
+    );
+    Ok(outcome)
 }
 
 fn validate_window(seconds: i64) -> Result<(), QueueError> {
@@ -1512,6 +1648,16 @@ pub async fn claim_due_run_fair(
     )
     .await?;
     transaction.commit().await?;
+    tracing::debug!(
+        event = "run.claimed",
+        run_id = %claimed.id,
+        job_id = %claimed.job_id,
+        project_id = %claimed.project_id,
+        run_type = %claimed.run_type,
+        worker_id,
+        attempt = claimed.attempt,
+        "claimed due run under quota"
+    );
     Ok(Some(claimed))
 }
 
@@ -1542,6 +1688,14 @@ pub async fn heartbeat_run(
     .fetch_optional(pool)
     .await?;
 
+    if renewed.is_none() {
+        tracing::warn!(
+            event = "run.heartbeat_lost",
+            run_id = %run_id,
+            worker_id,
+            "run lease heartbeat lost; worker no longer owns an unexpired lease"
+        );
+    }
     Ok(renewed)
 }
 
@@ -1576,6 +1730,12 @@ pub async fn complete_run(
 
     let Some((completed, job_id)) = completed else {
         transaction.rollback().await?;
+        tracing::warn!(
+            event = "run.lease_lost",
+            run_id = %run_id,
+            worker_id,
+            "run completion fenced out by a newer lease"
+        );
         return Ok(false);
     };
 
@@ -1587,6 +1747,13 @@ pub async fn complete_run(
     )
     .await?;
     transaction.commit().await?;
+    tracing::info!(
+        event = "run.completed",
+        run_id = %completed,
+        job_id = %job_id,
+        worker_id,
+        "run completed"
+    );
     Ok(true)
 }
 
@@ -1619,6 +1786,12 @@ pub async fn fail_run(
 
     let Some(row) = row else {
         transaction.rollback().await?;
+        tracing::warn!(
+            event = "run.lease_lost",
+            run_id = %run_id,
+            worker_id,
+            "run failure fenced out by a newer lease"
+        );
         return Ok(FailOutcome::LeaseLost);
     };
 
@@ -1656,6 +1829,16 @@ pub async fn fail_run(
         )
         .await?;
         transaction.commit().await?;
+        tracing::warn!(
+            event = "run.retry_scheduled",
+            run_id = %run_id,
+            job_id = %row.job_id,
+            worker_id,
+            error_code,
+            attempt = row.attempt,
+            retry_at = %retry_at,
+            "run failed and was rescheduled with backoff"
+        );
         return Ok(FailOutcome::Retried {
             attempt: row.attempt,
             retry_at,
@@ -1692,6 +1875,15 @@ pub async fn fail_run(
     )
     .await?;
     transaction.commit().await?;
+    tracing::warn!(
+        event = "run.failed",
+        run_id = %run_id,
+        job_id = %row.job_id,
+        worker_id,
+        error_code,
+        attempt = row.attempt,
+        "run failed terminally"
+    );
     Ok(FailOutcome::Failed {
         attempt: row.attempt,
     })
@@ -1788,6 +1980,13 @@ pub async fn recover_expired_run_leases(
     }
 
     transaction.commit().await?;
+    if !recovered.is_empty() {
+        tracing::info!(
+            event = "runs.lease_recovered",
+            count = recovered.len(),
+            "recovered expired run leases"
+        );
+    }
     Ok(recovered)
 }
 

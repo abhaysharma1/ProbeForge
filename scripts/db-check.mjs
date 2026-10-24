@@ -48,6 +48,8 @@ const commands = [
       "runs_lifecycle",
       "--test",
       "end_to_end",
+      "--test",
+      "admin_settings",
       "--",
       "--nocapture",
     ],

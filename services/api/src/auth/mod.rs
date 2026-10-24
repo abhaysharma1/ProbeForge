@@ -28,6 +28,7 @@ pub struct UserDto {
     pub id: Uuid,
     pub email: String,
     pub display_name: String,
+    pub is_admin: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -84,6 +85,7 @@ struct UserRow {
     email: String,
     display_name: String,
     password_hash: Option<String>,
+    is_admin: bool,
 }
 
 #[derive(sqlx::FromRow)]
@@ -93,6 +95,7 @@ struct SessionAuthRow {
     email: String,
     display_name: String,
     expires_at: DateTime<Utc>,
+    is_admin: bool,
 }
 
 #[derive(sqlx::FromRow)]
@@ -181,12 +184,18 @@ pub async fn login(
         )
     });
     if let Some(retry_after) = account_retry.into_iter().chain(ip_retry).max() {
+        tracing::warn!(
+            event = "auth.login_rate_limited",
+            retry_after_seconds = retry_after,
+            "login attempt rejected by the login rate limit"
+        );
         return Err(ApiError::rate_limited(retry_after));
     }
 
     let password_shape_valid = password::validate_password(&password).is_ok();
     let user: Option<UserRow> = sqlx::query_as(
-        "SELECT id, email, display_name, password_hash
+        "SELECT id, email, display_name, password_hash,
+                EXISTS (SELECT 1 FROM platform_admins pa WHERE pa.user_id = users.id) AS is_admin
          FROM users
          WHERE email = $1 AND status = 'active'",
     )
@@ -210,7 +219,10 @@ pub async fn login(
     .map_err(|_| ApiError::internal("password verification worker failed"))?;
 
     let Some(user) = user.filter(|_| verified) else {
-        tracing::warn!("login rejected");
+        tracing::warn!(
+            event = "auth.login_rejected",
+            "login rejected: invalid credentials"
+        );
         return Err(ApiError::unauthorized(
             "invalid_credentials",
             "Email or password is incorrect.",
@@ -258,6 +270,13 @@ pub async fn login(
 
     transaction.commit().await.map_err(ApiError::database)?;
 
+    tracing::info!(
+        event = "auth.login_succeeded",
+        user_id = %user.id,
+        session_id = %session_id,
+        "login succeeded"
+    );
+
     let mut headers = HeaderMap::new();
     cookies::append(
         &mut headers,
@@ -284,6 +303,7 @@ pub async fn login(
                 id: user.id,
                 email: user.email,
                 display_name: user.display_name,
+                is_admin: user.is_admin,
             },
             csrf_token,
             expires_at,
@@ -350,6 +370,13 @@ pub async fn logout(
     .map_err(ApiError::database)?;
     transaction.commit().await.map_err(ApiError::database)?;
 
+    tracing::info!(
+        event = "auth.logout",
+        user_id = %context.user.id,
+        session_id = %context.session_id,
+        "logout revoked the current session"
+    );
+
     let mut headers = HeaderMap::new();
     cookies::append(
         &mut headers,
@@ -389,6 +416,13 @@ pub async fn logout_all(
     .await
     .map_err(ApiError::database)?;
     transaction.commit().await.map_err(ApiError::database)?;
+
+    tracing::info!(
+        event = "auth.sessions_revoked",
+        user_id = %context.user.id,
+        revoked_count = revoked,
+        "all sessions revoked for the user"
+    );
 
     let mut headers = HeaderMap::new();
     cookies::append(
@@ -472,6 +506,14 @@ pub async fn revoke_session(
     .map_err(ApiError::database)?;
     transaction.commit().await.map_err(ApiError::database)?;
 
+    tracing::info!(
+        event = "auth.session_revoked",
+        user_id = %context.user.id,
+        session_id = %session_id,
+        current_session = session_id == context.session_id,
+        "session revoked"
+    );
+
     let mut headers = HeaderMap::new();
     if session_id == context.session_id {
         cookies::append(
@@ -503,7 +545,8 @@ pub async fn require_auth(
 
     let row: Option<SessionAuthRow> = sqlx::query_as(
         r#"
-        SELECT s.id AS session_id, s.user_id, u.email, u.display_name, s.expires_at
+        SELECT s.id AS session_id, s.user_id, u.email, u.display_name, s.expires_at,
+               EXISTS (SELECT 1 FROM platform_admins pa WHERE pa.user_id = s.user_id) AS is_admin
         FROM auth_sessions s
         JOIN users u ON u.id = s.user_id
         WHERE s.token_hash = $1
@@ -540,6 +583,7 @@ pub async fn require_auth(
             id: row.user_id,
             email: row.email,
             display_name: row.display_name,
+            is_admin: row.is_admin,
         },
         session_id: row.session_id,
         expires_at: row.expires_at,
@@ -567,6 +611,11 @@ pub async fn csrf_guard(
     if let Some(site) = request.headers().get("sec-fetch-site")
         && site.as_bytes() == b"cross-site"
     {
+        tracing::warn!(
+            event = "auth.csrf_rejected",
+            reason = "cross_site",
+            "state-changing request rejected: cross-site"
+        );
         return Err(ApiError::forbidden(
             "cross_site_request",
             "Cross-site state-changing requests are not allowed.",
@@ -583,6 +632,11 @@ pub async fn csrf_guard(
             .iter()
             .any(|allowed| allowed == origin)
         {
+            tracing::warn!(
+                event = "auth.csrf_rejected",
+                reason = "origin_not_allowed",
+                "state-changing request rejected: origin not allowed"
+            );
             return Err(ApiError::forbidden(
                 "origin_not_allowed",
                 "Request origin is not allowed.",
@@ -599,6 +653,11 @@ pub async fn csrf_guard(
         .ok_or_else(|| ApiError::forbidden("csrf_required", "A CSRF token is required."))?;
 
     if !session::constant_time_eq(&cookie_token, header_token) {
+        tracing::warn!(
+            event = "auth.csrf_rejected",
+            reason = "token_mismatch",
+            "state-changing request rejected: CSRF token mismatch"
+        );
         return Err(ApiError::forbidden(
             "csrf_invalid",
             "The CSRF token is invalid.",

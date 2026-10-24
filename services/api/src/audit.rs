@@ -19,6 +19,17 @@ pub async fn record_in_tx(
         json!({ "redacted": true })
     };
 
+    tracing::debug!(
+        event = "audit.recorded",
+        action,
+        resource_type,
+        resource_id = ?resource_id,
+        project_id = ?project_id,
+        actor_id = ?actor_id,
+        metadata = %probe_forge_observability::redact_json(metadata.clone()),
+        "audit event recorded"
+    );
+
     sqlx::query(
         r#"
         INSERT INTO audit_log (project_id, actor_id, action, resource_type, resource_id, metadata)

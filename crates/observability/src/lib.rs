@@ -9,6 +9,31 @@
 //! * [`redact_json`] / [`redact_text`] remove credentials before any value is
 //!   logged, stored in a generated report, or exported. Redaction lives here so
 //!   the API and the workers cannot drift apart.
+//!
+//! # Logging contract
+//!
+//! Every service and library follows one contract so log lines are greppable and
+//! comparable across the control plane and the workers:
+//!
+//! * **Levels.** `error` is an operation that failed and needs operator
+//!   attention; `warn` is a recoverable failure, a security denial, lease loss,
+//!   or a degraded state; `info` is a lifecycle or outcome transition (a claim,
+//!   a completion, a schedule promotion, service start/stop); `debug` is
+//!   per-step diagnostic detail (DNS resolution, redirect follow, no-op claim).
+//!   Hot paths stay at `debug` so `info` output is meaningful.
+//! * **Event names.** Include a stable `event` field in `snake_case`
+//!   (`job.claimed`, `run.completed`, `target.destination_blocked`) so a line
+//!   can be found without matching prose.
+//! * **Correlation.** Carry the identifiers in scope: `request_id` (HTTP),
+//!   `project_id`, `job_id`, `run_id`, and `worker_id`. Failures also carry the
+//!   stable `error_code` already persisted to the database.
+//! * **Service.** Only service binaries call [`init_tracing`], which tags the
+//!   process. Each service additionally sets `service` on its root span (the
+//!   API's `http_request` span, a worker's dispatch/poll loop) so child events
+//!   inherit it. Library crates emit events but never initialize a subscriber.
+//! * **Redaction.** Values are redacted before they are emitted, stored, or
+//!   exported. Never log headers, tokens, cookies, request/response bodies,
+//!   repository file contents, or secret values.
 
 use std::fmt;
 

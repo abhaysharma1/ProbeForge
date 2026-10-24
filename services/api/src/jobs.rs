@@ -133,6 +133,12 @@ async fn create_job(
 ) -> Result<Response, ApiError> {
     let role = load_project_role(&state.pool, context.user.id, query.project_id).await?;
     if !role.can_create_jobs() {
+        tracing::warn!(
+            event = "job.create_forbidden",
+            project_id = %query.project_id,
+            user_id = %context.user.id,
+            "job creation denied: insufficient project role"
+        );
         return Err(ApiError::forbidden(
             "forbidden",
             "You do not have permission to create jobs in this project.",
@@ -213,6 +219,15 @@ async fn create_job(
             )
             .await
             .map_err(ApiError::database)?;
+            tracing::info!(
+                event = "job.created",
+                job_id = %job_id,
+                project_id = %query.project_id,
+                user_id = %context.user.id,
+                goal,
+                intensity,
+                "job created and queued"
+            );
             (StatusCode::CREATED, job_id)
         }
         None => {
@@ -232,12 +247,24 @@ async fn create_job(
                 || existing.credential_ref != credential_ref
             {
                 transaction.rollback().await.map_err(ApiError::database)?;
+                tracing::warn!(
+                    event = "job.idempotency_conflict",
+                    project_id = %query.project_id,
+                    user_id = %context.user.id,
+                    "idempotency key reused for a different job request"
+                );
                 return Err(ApiError::conflict(
                     "idempotency_key_reused",
                     "That idempotency key was already used for a different job request.",
                 ));
             }
 
+            tracing::debug!(
+                event = "job.idempotent_replay",
+                job_id = %existing.id,
+                project_id = %query.project_id,
+                "idempotent job creation returned the existing job"
+            );
             (StatusCode::OK, existing.id)
         }
     };
@@ -298,6 +325,13 @@ async fn cancel_job(
 ) -> Result<Json<JobDto>, ApiError> {
     let (job, role) = load_job_for_user(&state.pool, context.user.id, job_id).await?;
     if !role.can_create_jobs() {
+        tracing::warn!(
+            event = "job.cancel_forbidden",
+            job_id = %job_id,
+            project_id = %job.project_id,
+            user_id = %context.user.id,
+            "job cancellation denied: insufficient project role"
+        );
         return Err(ApiError::forbidden(
             "forbidden",
             "You do not have permission to cancel jobs in this project.",
@@ -321,6 +355,11 @@ async fn cancel_job(
         "cancelled" => {
             let row = load_job_row(&mut transaction, context.user.id, job_id).await?;
             transaction.commit().await.map_err(ApiError::database)?;
+            tracing::debug!(
+                event = "job.cancel_noop",
+                job_id = %job_id,
+                "job was already cancelled"
+            );
             return Ok(Json(job_from_row(row)?));
         }
         "failed" | "expired" => {
@@ -371,6 +410,13 @@ async fn cancel_job(
 
     let row = load_job_row(&mut transaction, context.user.id, job_id).await?;
     transaction.commit().await.map_err(ApiError::database)?;
+    tracing::info!(
+        event = "job.cancelled",
+        job_id = %job_id,
+        project_id = %job.project_id,
+        user_id = %context.user.id,
+        "job cancelled"
+    );
     Ok(Json(job_from_row(row)?))
 }
 

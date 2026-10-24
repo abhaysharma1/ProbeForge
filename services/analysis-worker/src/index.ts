@@ -2,9 +2,16 @@ import { DEFAULT_PLANNING_LIMITS } from "./agent/limits";
 import { loadConfig } from "./config";
 import { healthResponse, readinessResponse, SERVICE_NAME } from "./health";
 import { processJobOnce } from "./job-loop";
+import { createLogger } from "./logging/logger";
 import { type AuditSink, JsonLineAuditSink, MemoryAuditSink } from "./repository/audit";
 
 const config = loadConfig();
+
+const logger = createLogger({
+  service: SERVICE_NAME,
+  level: config.logLevel,
+  format: config.logFormat,
+});
 
 let shuttingDown = false;
 
@@ -24,11 +31,7 @@ const server = Bun.serve({
   },
 });
 
-function log(event: string, fields: Record<string, unknown> = {}): void {
-  console.log(JSON.stringify({ level: "info", service: SERVICE_NAME, event, ...fields }));
-}
-
-log("listening", { address: `http://${server.hostname}:${server.port}` });
+logger.info("listening", { address: `http://${server.hostname}:${server.port}` });
 
 /**
  * Background job loop: claim queued jobs and produce a draft plan. It is
@@ -40,14 +43,14 @@ log("listening", { address: `http://${server.hostname}:${server.port}` });
 async function runJobLoop(): Promise<void> {
   const connectionString = process.env.DATABASE_URL?.trim();
   if (connectionString === undefined || connectionString.length === 0) {
-    log("job_loop_disabled", { reason: "DATABASE_URL is not set" });
+    logger.warn("job_loop_disabled", { reason: "DATABASE_URL is not set" });
     return;
   }
   const audit: AuditSink =
     config.ingestion.auditLogPath === null
       ? new MemoryAuditSink()
       : new JsonLineAuditSink(config.ingestion.auditLogPath);
-  log("job_loop_started", { intervalMs: config.jobLoopIntervalMs });
+  logger.info("job_loop_started", { intervalMs: config.jobLoopIntervalMs });
 
   while (!shuttingDown) {
     try {
@@ -57,20 +60,18 @@ async function runJobLoop(): Promise<void> {
         allowedGitHosts: config.ingestion.allowedGitHosts,
         ingestionLimits: config.ingestion.limits,
         planningLimits: DEFAULT_PLANNING_LIMITS,
+        planningProvider: config.planning.provider,
+        planningModel: config.planning.model,
         audit,
+        logger,
       });
       if (result !== null) {
-        log("job_processed", { ...result });
+        logger.info("job_processed", { ...result });
       }
     } catch (error) {
-      console.log(
-        JSON.stringify({
-          level: "warn",
-          service: SERVICE_NAME,
-          event: "job_loop_error",
-          message: error instanceof Error ? error.message : "unexpected error",
-        }),
-      );
+      logger.warn("job_loop_error", {
+        message: error instanceof Error ? error.message : "unexpected error",
+      });
     }
     if (!shuttingDown) {
       await Bun.sleep(config.jobLoopIntervalMs);
@@ -85,7 +86,7 @@ if (config.jobLoop) {
 async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
-  log("shutdown", { signal });
+  logger.info("shutdown", { signal });
   await server.stop(true);
   process.exit(0);
 }

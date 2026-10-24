@@ -40,6 +40,17 @@ pub async fn run_load(
     let dropped = Arc::new(AtomicU64::new(0));
     let started_at = Utc::now();
 
+    tracing::debug!(
+        event = "load.run_started",
+        scenario = %spec.scenario_name,
+        steps = spec.steps.len(),
+        virtual_users = ?spec.limits.virtual_users,
+        arrival_rate_per_second = ?spec.limits.arrival_rate_per_second,
+        max_requests = spec.limits.max_requests,
+        duration_seconds = spec.limits.duration_seconds,
+        "load run started"
+    );
+
     for step in &spec.steps {
         for reference in step.secret_headers.values() {
             resolver.resolve(reference)?;
@@ -92,6 +103,16 @@ pub async fn run_load(
     } else {
         RunStatus::Completed
     };
+    tracing::info!(
+        event = "load.run_finished",
+        scenario = %spec.scenario_name,
+        status = ?status,
+        requests = metrics.summary.request_count,
+        errors = metrics.summary.error_count,
+        timeouts = metrics.summary.timeout_count,
+        dropped_iterations = metrics.summary.dropped_iterations,
+        "load run finished"
+    );
     Ok(LoadRunOutcome { status, metrics })
 }
 

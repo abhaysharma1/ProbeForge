@@ -104,8 +104,22 @@ from `.env`:
 | Email | `dev@probeforge.local` |
 | Password | `probeforge-dev-12345` |
 
+`bun run user:seed` also creates a **platform administrator** (settings-only, no
+cross-tenant access):
+
+| Field | Value |
+|---|---|
+| Email | `admin@probeforge.local` |
+| Password | `probeforge-admin-12345` |
+
+The admin signs in and opens **Platform admin** in the sidebar to configure Pi
+planning (provider, model, limits, encrypted API key), API rate limits,
+retention, and project defaults. Storing a provider key requires
+`PROBE_FORGE_SETTINGS_KEY` (base64, 32 bytes) in `.env`; generate one with
+`openssl rand -base64 32`.
+
 It refuses to run unless `PROBE_FORGE_ALLOW_DEV_SEED=true` is set (it is set in
-the sample `.env`), and it never prints the password. For a real account, use the
+the sample `.env`), and it never prints a password. For a real account, use the
 terminal-prompting binary instead:
 
 ```bash

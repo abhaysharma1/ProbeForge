@@ -138,7 +138,16 @@ pub fn build_runner_spec(
     let origin = Url::parse(&scope.origin).map_err(|_| LoadRunError::InvalidScenario)?;
 
     validate_load_scenario_scope(scenario, environment, scope, policy).map_err(|issues| {
-        LoadRunError::ScopeViolation(issues.first().map_or("target_scope_violation", |i| i.code))
+        let code = issues
+            .first()
+            .map_or("target_scope_violation", |issue| issue.code);
+        tracing::warn!(
+            event = "load.scope_violation",
+            scenario = %scenario.name,
+            code,
+            "load scenario is outside the approved target scope"
+        );
+        LoadRunError::ScopeViolation(code)
     })?;
 
     let steps = scenario
@@ -167,6 +176,13 @@ pub fn build_runner_spec(
         return Err(LoadRunError::InvalidScenario);
     }
 
+    tracing::debug!(
+        event = "load.spec_built",
+        scenario = %scenario.name,
+        steps = steps.len(),
+        max_requests = limits.max_requests,
+        "built a validated load runner spec"
+    );
     Ok(RunnerSpec {
         scenario_name: scenario.name.clone(),
         origin,

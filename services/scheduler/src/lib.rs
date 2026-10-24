@@ -283,42 +283,72 @@ async fn scheduler_loop(pool: PgPool, interval: Duration) {
 
         match probe_forge_queue::recover_expired_schedules(&pool, 50).await {
             Ok(schedules) if !schedules.is_empty() => {
-                tracing::info!(count = schedules.len(), "disabled expired schedules");
+                tracing::debug!(
+                    event = "schedules.expired_recovered",
+                    count = schedules.len(),
+                    "disabled expired schedules"
+                );
             }
             Ok(_) => {}
-            Err(error) => tracing::warn!(error = %error, "expired schedule recovery failed"),
+            Err(error) => {
+                tracing::warn!(event = "schedules.recover_failed", error = %error, "expired schedule recovery failed")
+            }
         }
 
         match probe_forge_queue::promote_due_schedules(&pool, 50).await {
             Ok(runs) if !runs.is_empty() => {
-                tracing::info!(count = runs.len(), "promoted due schedules");
+                tracing::debug!(
+                    event = "schedules.promoted",
+                    count = runs.len(),
+                    "promoted due schedules"
+                );
             }
             Ok(_) => {}
-            Err(error) => tracing::warn!(error = %error, "due schedule promotion failed"),
+            Err(error) => {
+                tracing::warn!(event = "schedules.promote_failed", error = %error, "due schedule promotion failed")
+            }
         }
 
         match probe_forge_queue::promote_due_runs(&pool, 50).await {
             Ok(runs) if !runs.is_empty() => {
-                tracing::info!(count = runs.len(), "promoted due scheduled runs");
+                tracing::debug!(
+                    event = "runs.promoted",
+                    count = runs.len(),
+                    "promoted due scheduled runs"
+                );
             }
             Ok(_) => {}
-            Err(error) => tracing::warn!(error = %error, "due-run promotion failed"),
+            Err(error) => {
+                tracing::warn!(event = "runs.promote_failed", error = %error, "due-run promotion failed")
+            }
         }
 
         match probe_forge_queue::recover_expired_run_leases(&pool, 50).await {
             Ok(runs) if !runs.is_empty() => {
-                tracing::info!(count = runs.len(), "recovered expired run leases");
+                tracing::debug!(
+                    event = "runs.lease_recovered",
+                    count = runs.len(),
+                    "recovered expired run leases"
+                );
             }
             Ok(_) => {}
-            Err(error) => tracing::warn!(error = %error, "expired run lease recovery failed"),
+            Err(error) => {
+                tracing::warn!(event = "runs.lease_recovery_failed", error = %error, "expired run lease recovery failed")
+            }
         }
 
         match probe_forge_queue::recover_expired_job_leases(&pool, 50).await {
             Ok(jobs) if !jobs.is_empty() => {
-                tracing::info!(count = jobs.len(), "recovered expired job leases");
+                tracing::debug!(
+                    event = "jobs.lease_recovered",
+                    count = jobs.len(),
+                    "recovered expired job leases"
+                );
             }
             Ok(_) => {}
-            Err(error) => tracing::warn!(error = %error, "expired job lease recovery failed"),
+            Err(error) => {
+                tracing::warn!(event = "jobs.lease_recovery_failed", error = %error, "expired job lease recovery failed")
+            }
         }
     }
 }
@@ -328,9 +358,11 @@ async fn retention_loop(pool: PgPool, interval: Duration, policy: RetentionPolic
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         ticker.tick().await;
-        match probe_forge_queue::run_retention(&pool, &policy).await {
+        let effective = effective_retention_policy(&pool, &policy).await;
+        match probe_forge_queue::run_retention(&pool, &effective).await {
             Ok(outcome) if outcome != RetentionOutcome::default() => {
-                tracing::info!(
+                tracing::debug!(
+                    event = "retention.purge",
                     evidence_deleted = outcome.evidence_deleted,
                     reports_deleted = outcome.reports_deleted,
                     job_events_deleted = outcome.job_events_deleted,
@@ -341,8 +373,30 @@ async fn retention_loop(pool: PgPool, interval: Duration, policy: RetentionPolic
                 );
             }
             Ok(_) => {}
-            Err(error) => tracing::warn!(error = %error, "retention purge failed"),
+            Err(error) => {
+                tracing::warn!(event = "retention.purge_failed", error = %error, "retention purge failed")
+            }
         }
+    }
+}
+
+/// The admin-configurable retention windows override the environment defaults.
+async fn effective_retention_policy(pool: &PgPool, base: &RetentionPolicy) -> RetentionPolicy {
+    let row: Result<Option<(i32, i32, i32)>, sqlx::Error> = sqlx::query_as(
+        "SELECT retention_event_days, retention_report_days, retention_counter_days
+         FROM platform_settings WHERE id = true",
+    )
+    .fetch_optional(pool)
+    .await;
+
+    match row {
+        Ok(Some((event_days, report_days, counter_days))) => RetentionPolicy {
+            event_retention_days: event_days,
+            report_retention_days: report_days,
+            counter_retention_days: counter_days,
+            ..base.clone()
+        },
+        _ => base.clone(),
     }
 }
 

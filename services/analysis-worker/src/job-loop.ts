@@ -4,8 +4,12 @@ import type { Intensity, JobGoal } from "@probe-forge/contracts";
 import { testCatalog } from "@probe-forge/test-catalog";
 import { generatePlan, type PlanGenerationResult } from "./agent/generate";
 import { DEFAULT_PLANNING_LIMITS, type PlanningLimits } from "./agent/limits";
+import { createPiPlanningRuntime, type PlanningRuntime } from "./agent/model";
 import { createPostgresPlanStore } from "./agent/postgres-store";
 import { discoverApplication } from "./discovery";
+import { SERVICE_NAME } from "./health";
+import { createLogger, type Logger } from "./logging/logger";
+import { loadPlatformPlanning, mergePlanningLimits } from "./platform-settings";
 import type { AuditSink } from "./repository/audit";
 import { validateGitUrl } from "./repository/git-url";
 import { withRepositorySnapshot } from "./repository/ingest";
@@ -30,7 +34,12 @@ export interface JobLoopOptions {
   readonly allowedGitHosts: readonly string[];
   readonly ingestionLimits: IngestionLimits;
   readonly planningLimits?: PlanningLimits;
+  /** Environment fallback when the admin has not configured a provider/model. */
+  readonly planningProvider?: string | null;
+  readonly planningModel?: string | null;
   readonly audit: AuditSink;
+  /** Structured logger. Defaults to a silent sink so callers stay test-safe. */
+  readonly logger?: Logger;
 }
 
 export interface JobLoopResult {
@@ -82,6 +91,8 @@ export async function processJobOnce(
   const sql = new Bun.SQL(connectionString, { max: 4, idleTimeout: 30, connectionTimeout: 10 });
   const store = createPostgresPlanStore(connectionString);
   const lease = options.leaseSeconds ?? DEFAULT_LEASE_SECONDS;
+  const logger =
+    options.logger ?? createLogger({ service: SERVICE_NAME, level: "error", sink: () => {} });
 
   try {
     const claimed = await sql<ClaimedJobRow[]>`
@@ -107,6 +118,13 @@ export async function processJobOnce(
     const job = claimed[0];
     if (job === undefined) return null;
 
+    logger.info("job.claimed", {
+      jobId: job.id,
+      projectId: job.project_id,
+      workerId: options.workerId,
+      goal: job.goal,
+    });
+
     const localPath = filePathFromUrl(job.normalized_url);
     const localFixtureRoot = localPath === null ? null : dirname(localPath);
     const target = validateGitUrl(job.normalized_url, {
@@ -114,6 +132,29 @@ export async function processJobOnce(
       allowLocalFixtures: options.allowLocalFixtures,
       localFixtureRoot,
     });
+
+    // Admin settings take precedence over the environment; the provider key is
+    // decrypted only here and never logged or stored in planning metadata.
+    let platform: Awaited<ReturnType<typeof loadPlatformPlanning>> | null = null;
+    try {
+      platform = await loadPlatformPlanning(sql);
+    } catch {
+      platform = null;
+    }
+    const provider = platform?.provider ?? options.planningProvider ?? null;
+    const model = platform?.model ?? options.planningModel ?? null;
+    const limits = mergePlanningLimits(
+      options.planningLimits ?? DEFAULT_PLANNING_LIMITS,
+      platform?.limitsOverride ?? {},
+    );
+    let runtime: PlanningRuntime | null = null;
+    if (provider !== null && provider.trim() !== "" && model !== null && model.trim() !== "") {
+      try {
+        runtime = createPiPlanningRuntime(provider, model, limits, platform?.apiKey ?? null);
+      } catch {
+        runtime = null;
+      }
+    }
 
     let result: PlanGenerationResult;
     try {
@@ -129,8 +170,10 @@ export async function processJobOnce(
           allowLocalFixtures: options.allowLocalFixtures,
         },
         async (session) => {
+          logger.debug("job.discovery_started", { jobId: job.id });
           const inventory = await discoverApplication(session);
-          return await generatePlan(
+          logger.debug("job.discovery_completed", { jobId: job.id });
+          const planResult = await generatePlan(
             {
               job: {
                 id: job.id,
@@ -144,14 +187,20 @@ export async function processJobOnce(
               catalog: testCatalog,
             },
             {
-              runtime: null,
+              runtime,
               store,
-              limits: options.planningLimits ?? DEFAULT_PLANNING_LIMITS,
+              limits,
             },
           );
+          logger.debug("job.plan_generated", {
+            jobId: job.id,
+            planOutcome: planResult.outcome,
+          });
+          return planResult;
         },
       );
     } catch (error) {
+      const errorCode = jobErrorCode(error);
       const rows = await sql<{ status: string }[]>`
         UPDATE jobs
         SET status = CASE WHEN attempt < max_attempts THEN 'queued' ELSE 'failed' END,
@@ -159,14 +208,18 @@ export async function processJobOnce(
             lease_expires_at = NULL,
             heartbeat_at = NULL,
             not_before = now() + make_interval(secs => ${RETRY_BACKOFF_SECONDS}),
-            last_error_code = ${jobErrorCode(error)}
+            last_error_code = ${errorCode}
         WHERE id = ${job.id} AND worker_id = ${options.workerId}
         RETURNING status
       `;
-      return {
+      const outcome = rows[0]?.status === "queued" ? "retry_scheduled" : "failed";
+      logger.warn("job.processing_failed", {
         jobId: job.id,
-        outcome: rows[0]?.status === "queued" ? "retry_scheduled" : "failed",
-      };
+        workerId: options.workerId,
+        errorCode,
+        outcome,
+      });
+      return { jobId: job.id, outcome };
     }
 
     if (result.outcome === "planned" || result.outcome === "fallback") {
@@ -181,6 +234,12 @@ export async function processJobOnce(
             current_plan_id = COALESCE(${planId}, current_plan_id)
         WHERE id = ${job.id} AND worker_id = ${options.workerId}
       `;
+      logger.info("job.awaiting_approval", {
+        jobId: job.id,
+        workerId: options.workerId,
+        planId,
+        planOutcome: result.outcome,
+      });
       return { jobId: job.id, outcome: "awaiting_approval" };
     }
 
@@ -195,10 +254,14 @@ export async function processJobOnce(
       WHERE id = ${job.id} AND worker_id = ${options.workerId}
       RETURNING status
     `;
-    return {
+    const outcome = rows[0]?.status === "queued" ? "retry_scheduled" : "failed";
+    logger.warn("job.plan_not_produced", {
       jobId: job.id,
-      outcome: rows[0]?.status === "queued" ? "retry_scheduled" : "failed",
-    };
+      workerId: options.workerId,
+      errorCode: result.failureCode ?? "planning_failed",
+      outcome,
+    });
+    return { jobId: job.id, outcome };
   } finally {
     await store.close();
     await sql.close({ timeout: 5 });

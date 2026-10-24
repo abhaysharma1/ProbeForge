@@ -389,8 +389,20 @@ fn assert_address_allowed(
     if is_address_allowed(address, policy) {
         Ok(())
     } else if classify_ip(address).is_private_network() && !policy.allow_private_networks {
+        tracing::warn!(
+            event = "target.destination_blocked",
+            address = %address,
+            class = "private_network",
+            "blocked a private-network destination (policy disallows private targets)"
+        );
         Err(TargetValidationError::PrivateNetworkDisabled)
     } else {
+        tracing::warn!(
+            event = "target.destination_blocked",
+            address = %address,
+            class = ?classify_ip(address),
+            "blocked a link-local, metadata, reserved, or otherwise unsafe destination"
+        );
         Err(TargetValidationError::UnsafeDestination)
     }
 }
@@ -587,12 +599,23 @@ fn validate_authority(
         .iter()
         .any(|allowed| allowed.eq_ignore_ascii_case(&host))
     {
+        tracing::warn!(
+            event = "target.scope_violation",
+            host = %host,
+            "request host is outside the approved target scope"
+        );
         return Err(TargetValidationError::ScopeViolation);
     }
     let port = value
         .port_or_known_default()
         .ok_or(TargetValidationError::PortNotAllowed)?;
     if port == 0 || SENSITIVE_PORTS.contains(&port) || !guard.scope.allowed_ports.contains(&port) {
+        tracing::warn!(
+            event = "target.port_not_allowed",
+            host = %host,
+            port,
+            "request port is not allowed for this target"
+        );
         return Err(TargetValidationError::PortNotAllowed);
     }
     if let Ok(address) = host.parse::<IpAddr>() {
@@ -625,6 +648,11 @@ pub fn validate_request_url(
             .iter()
             .any(|prefix| path_in_scope(path, prefix))
     {
+        tracing::warn!(
+            event = "target.scope_violation",
+            reason = "path",
+            "request path is outside the approved target scope"
+        );
         return Err(TargetValidationError::ScopeViolation);
     }
     Ok(())
@@ -747,13 +775,25 @@ pub fn validate_redirect(
         .join(location)
         .map_err(|_| TargetValidationError::InvalidRedirect)?;
     if current.scheme() == "https" && next.scheme() != "https" {
+        tracing::warn!(
+            event = "target.redirect_blocked",
+            reason = "downgrade",
+            "refused an HTTPS-to-HTTP redirect downgrade"
+        );
         return Err(TargetValidationError::RedirectDowngrade);
     }
     validate_request_url(guard, &next, policy).map_err(|error| match error {
         TargetValidationError::ScopeViolation
         | TargetValidationError::PortNotAllowed
         | TargetValidationError::InvalidScheme
-        | TargetValidationError::InvalidHost => TargetValidationError::RedirectViolation,
+        | TargetValidationError::InvalidHost => {
+            tracing::warn!(
+                event = "target.redirect_blocked",
+                reason = "scope",
+                "redirect destination is outside the approved target scope"
+            );
+            TargetValidationError::RedirectViolation
+        }
         other => other,
     })?;
     Ok(next)
@@ -789,6 +829,14 @@ async fn resolve_host(
 ) -> Result<ResolvedDestination, TargetValidationError> {
     if let Ok(address) = host.parse::<IpAddr>() {
         assert_address_allowed(address, policy)?;
+        tracing::debug!(
+            event = "target.resolved",
+            host,
+            port,
+            addresses = 1usize,
+            source = "literal",
+            "target host is an IP literal"
+        );
         return Ok(ResolvedDestination {
             host: host.to_owned(),
             port,
@@ -799,11 +847,25 @@ async fn resolve_host(
     addresses.sort();
     addresses.dedup();
     if addresses.is_empty() {
+        tracing::warn!(
+            event = "target.resolve_failed",
+            host,
+            port,
+            "target host did not resolve to any address"
+        );
         return Err(TargetValidationError::EmptyResolution);
     }
     for address in &addresses {
         assert_address_allowed(*address, policy)?;
     }
+    tracing::debug!(
+        event = "target.resolved",
+        host,
+        port,
+        addresses = addresses.len(),
+        source = "dns",
+        "resolved and validated target destination"
+    );
     Ok(ResolvedDestination {
         host: host.to_owned(),
         port,
@@ -940,6 +1002,10 @@ impl RunBudget {
     pub fn cancel(&self) {
         self.inner.cancelled.store(true, Ordering::SeqCst);
         let _ = self.inner.cancel_signal.send(true);
+        tracing::debug!(
+            event = "target.budget_cancelled",
+            "run budget was cancelled; in-flight and future requests will stop"
+        );
     }
 
     pub fn is_cancelled(&self) -> bool {
@@ -1287,6 +1353,11 @@ impl GuardedHttpClient {
                     ))?;
                 current = validate_redirect(guard, &current, location, &self.policy)?;
                 redirects += 1;
+                tracing::debug!(
+                    event = "target.redirect_followed",
+                    redirects,
+                    "following an in-scope redirect"
+                );
                 continue;
             }
 
@@ -1314,6 +1385,14 @@ impl GuardedHttpClient {
                 body.extend_from_slice(&chunk);
             }
             budget.check_response_size(body.len() as u64)?;
+            tracing::debug!(
+                event = "target.request_completed",
+                host = %resolved.host,
+                status,
+                bytes = body.len(),
+                redirects,
+                "guarded request completed"
+            );
             return Ok(GuardedResponse {
                 status,
                 headers,

@@ -80,6 +80,12 @@ async fn set_quota(
 ) -> Result<Json<QuotaDto>, ApiError> {
     let role = load_project_role(&state.pool, context.user.id, project_id).await?;
     if !role.can_manage_quota() {
+        tracing::warn!(
+            event = "quota.update_forbidden",
+            project_id = %project_id,
+            user_id = %context.user.id,
+            "quota update denied: insufficient project role"
+        );
         return Err(ApiError::forbidden(
             "forbidden",
             "You do not have permission to change quotas in this project.",
@@ -116,6 +122,14 @@ async fn set_quota(
     .map_err(ApiError::database)?;
     transaction.commit().await.map_err(ApiError::database)?;
 
+    tracing::info!(
+        event = "project.quota_updated",
+        project_id = %row.project_id,
+        user_id = %context.user.id,
+        max_active_runs = row.max_active_runs,
+        window_seconds = row.window_seconds,
+        "project quota updated"
+    );
     Ok(Json(QuotaDto {
         project_id: row.project_id,
         configured: true,

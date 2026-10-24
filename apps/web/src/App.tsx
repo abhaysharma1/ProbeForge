@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { AdminView } from "./AdminView";
 import { ApiError, type AuthUser, getCsrfToken, getSession, login, logout } from "./api";
 import { LoginView } from "./LoginView";
 import { ProjectsView } from "./ProjectsView";
@@ -30,6 +31,7 @@ function BootScreen({ message }: { readonly message: string }) {
 export default function App() {
   const [auth, setAuth] = useState<AuthState>({ status: "loading" });
   const [bootAttempt, setBootAttempt] = useState(0);
+  const [view, setView] = useState<"projects" | "admin">("projects");
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: bootAttempt is the explicit retry key
   useEffect(() => {
@@ -106,6 +108,7 @@ export default function App() {
       user: result.user,
       csrfToken: result.csrfToken,
     });
+    setView("projects");
   };
 
   const handleSignOut = async () => {
@@ -122,6 +125,7 @@ export default function App() {
     } catch {
       setAuth({ status: "signedOut", csrfToken: "" });
     }
+    setView("projects");
   };
 
   const handleSessionExpired = useCallback(() => {
@@ -173,12 +177,21 @@ export default function App() {
     return <LoginView onLogin={handleLogin} />;
   }
 
-  return (
+  return auth.user.isAdmin && view === "admin" ? (
+    <AdminView
+      user={auth.user}
+      csrfToken={auth.csrfToken}
+      onBack={() => setView("projects")}
+      onSignOut={handleSignOut}
+      onSessionExpired={handleSessionExpired}
+    />
+  ) : (
     <ProjectsView
       user={auth.user}
       csrfToken={auth.csrfToken}
       onSignOut={handleSignOut}
       onSessionExpired={handleSessionExpired}
+      onOpenAdmin={auth.user.isAdmin ? () => setView("admin") : undefined}
     />
   );
 }

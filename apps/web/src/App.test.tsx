@@ -351,6 +351,23 @@ const RUN_DETAIL = {
   },
 };
 
+const ADMIN_SETTINGS = {
+  planning: {
+    provider: null,
+    model: null,
+    limits: {},
+    apiKeyConfigured: false,
+    apiKeyHint: null,
+    apiKeyUpdatedAt: null,
+  },
+  rateLimits: { apiRequestsPerMinute: 240, expensiveRequestsPerMinute: 20 },
+  retention: { eventDays: 30, reportDays: 180, counterDays: 7 },
+  projectDefaults: { maxActiveRuns: 2, maxRequestsPerWindow: null, windowSeconds: 86400 },
+  settingsKeyConfigured: true,
+  updatedBy: null,
+  updatedAt: "2026-10-24T00:00:00Z",
+};
+
 function mockResponse(body: unknown, status = 200) {
   return {
     ok: status >= 200 && status < 300,
@@ -373,6 +390,8 @@ interface FetchOptions {
   readonly targets?: readonly unknown[];
   readonly createdJob?: unknown;
   readonly createJobStatus?: number;
+  readonly admin?: boolean;
+  readonly adminSettings?: unknown;
 }
 
 function installFetch(options: FetchOptions) {
@@ -384,7 +403,7 @@ function installFetch(options: FetchOptions) {
     if (url.endsWith("/api/auth/session")) {
       return options.session
         ? mockResponse({
-            user: USER,
+            user: { ...USER, isAdmin: options.admin ?? false },
             sessionId: "33333333-3333-4333-8333-333333333333",
             csrfToken: "csrf-session",
             expiresAt: "2026-10-23T20:00:00Z",
@@ -407,7 +426,7 @@ function installFetch(options: FetchOptions) {
         );
       }
       return mockResponse({
-        user: USER,
+        user: { ...USER, isAdmin: options.admin ?? false },
         csrfToken: "csrf-login",
         expiresAt: "2026-10-23T20:00:00Z",
       });
@@ -527,6 +546,10 @@ function installFetch(options: FetchOptions) {
         );
       }
       return mockResponse(options.createdJob ?? JOB, 201);
+    }
+
+    if (url.endsWith("/api/admin/settings") && method === "GET") {
+      return mockResponse(options.adminSettings ?? ADMIN_SETTINGS);
     }
 
     if (url.includes("/members")) {
@@ -775,6 +798,22 @@ describe("App", () => {
     ).toBeInTheDocument();
     expect(screen.getByLabelText("Missing security headers")).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Approve selected plan" })).not.toBeInTheDocument();
+  });
+
+  it("shows the platform admin dashboard for an administrator", async () => {
+    await renderSignedIn({ session: true, admin: true, projects: [] });
+
+    fireEvent.click(await screen.findByRole("button", { name: /Platform admin/ }));
+
+    expect(await screen.findByRole("heading", { name: "Platform settings" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Provider")).toBeInTheDocument();
+    expect(screen.getByLabelText("API requests / minute")).toBeInTheDocument();
+  });
+
+  it("hides the platform admin entry from non-administrators", async () => {
+    await renderSignedIn({ session: true, projects: [] });
+
+    expect(screen.queryByRole("button", { name: /Platform admin/ })).toBeNull();
   });
 
   it("signs out and returns to the login view", async () => {

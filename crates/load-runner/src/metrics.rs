@@ -194,6 +194,14 @@ pub async fn persist_metrics(
         .await?;
     }
     transaction.commit().await?;
+    tracing::info!(
+        event = "load.metrics_persisted",
+        run_id = %run_id,
+        project_id = %project_id,
+        buckets = metrics.buckets.len(),
+        requests = metrics.summary.request_count,
+        "persisted load run metrics"
+    );
     Ok(())
 }
 

@@ -76,6 +76,13 @@ async fn create_runs(
 
     let role = load_project_role(&state.pool, context.user.id, plan.project_id).await?;
     if !role.can_create_jobs() {
+        tracing::warn!(
+            event = "run.create_forbidden",
+            plan_id = %plan_id,
+            project_id = %plan.project_id,
+            user_id = %context.user.id,
+            "run creation denied: insufficient project role"
+        );
         return Err(ApiError::forbidden(
             "forbidden",
             "You do not have permission to create runs in this project.",
@@ -214,7 +221,10 @@ async fn create_runs(
 
     transaction.commit().await.map_err(ApiError::database)?;
     info!(
+        event = "runs.created",
         plan_id = %plan_id,
+        job_id = %plan.job_id,
+        project_id = %plan.project_id,
         run_count = runs.len(),
         "runs queued for an approved plan"
     );
@@ -315,6 +325,13 @@ async fn cancel_run(
 
     let role = load_project_role(&state.pool, context.user.id, project_id).await?;
     if !role.can_create_jobs() {
+        tracing::warn!(
+            event = "run.cancel_forbidden",
+            run_id = %run_id,
+            project_id = %project_id,
+            user_id = %context.user.id,
+            "run cancellation denied: insufficient project role"
+        );
         return Err(ApiError::forbidden(
             "forbidden",
             "You do not have permission to cancel runs in this project.",
@@ -322,6 +339,11 @@ async fn cancel_run(
     }
 
     if status == "cancelled" {
+        tracing::debug!(
+            event = "run.cancel_noop",
+            run_id = %run_id,
+            "run was already cancelled"
+        );
         return Ok(Json(RunRef {
             id: run_id,
             run_type,
@@ -372,6 +394,14 @@ async fn cancel_run(
     .await?;
     transaction.commit().await.map_err(ApiError::database)?;
 
+    tracing::info!(
+        event = "run.cancelled",
+        run_id = %run_id,
+        job_id = %job_id,
+        project_id = %project_id,
+        user_id = %context.user.id,
+        "run cancelled"
+    );
     Ok(Json(RunRef {
         id: run_id,
         run_type,
@@ -397,6 +427,12 @@ async fn validate_authorization(
     .await
     .map_err(ApiError::database)?;
     if active.is_none() {
+        tracing::warn!(
+            event = "run.authorization_inactive",
+            authorization_id = %authorization_id,
+            project_id = %project_id,
+            "run creation refused: target authorization is missing, revoked, or expired"
+        );
         return Err(ApiError::invalid(
             "target_authorization_inactive",
             "The selected target authorization is missing, revoked, or expired.",

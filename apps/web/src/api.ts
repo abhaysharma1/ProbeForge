@@ -6,6 +6,7 @@ export interface AuthUser {
   readonly id: string;
   readonly email: string;
   readonly displayName: string;
+  readonly isAdmin: boolean;
 }
 
 export interface SessionInfo {
@@ -567,6 +568,67 @@ export function createRuns(
 
 export function cancelRun(runId: string, csrfToken: string): Promise<RunRef> {
   return unsafeRequest<RunRef>("POST", `/runs/${runId}/cancel`, csrfToken);
+}
+
+export interface PlanningSettings {
+  readonly provider: string | null;
+  readonly model: string | null;
+  readonly limits: Record<string, number>;
+  readonly apiKeyConfigured: boolean;
+  readonly apiKeyHint: string | null;
+  readonly apiKeyUpdatedAt: string | null;
+}
+
+export interface AdminSettings {
+  readonly planning: PlanningSettings;
+  readonly rateLimits: {
+    readonly apiRequestsPerMinute: number;
+    readonly expensiveRequestsPerMinute: number;
+  };
+  readonly retention: {
+    readonly eventDays: number;
+    readonly reportDays: number;
+    readonly counterDays: number;
+  };
+  readonly projectDefaults: {
+    readonly maxActiveRuns: number;
+    readonly maxRequestsPerWindow: number | null;
+    readonly windowSeconds: number;
+  };
+  readonly settingsKeyConfigured: boolean;
+  readonly updatedBy: string | null;
+  readonly updatedAt: string;
+}
+
+export interface UpdateAdminSettingsInput {
+  readonly planningProvider: string | null;
+  readonly planningModel: string | null;
+  readonly planningLimits: Record<string, number>;
+  readonly apiKey?: string;
+  readonly clearApiKey?: boolean;
+  readonly apiRequestsPerMinute: number;
+  readonly expensiveRequestsPerMinute: number;
+  readonly retentionEventDays: number;
+  readonly retentionReportDays: number;
+  readonly retentionCounterDays: number;
+  readonly defaultMaxActiveRuns: number;
+  readonly defaultMaxRequestsPerWindow: number | null;
+  readonly defaultWindowSeconds: number;
+}
+
+export function getAdminSettings(): Promise<AdminSettings> {
+  return request<AdminSettings>("/admin/settings");
+}
+
+export function updateAdminSettings(
+  input: UpdateAdminSettingsInput,
+  csrfToken: string,
+): Promise<AdminSettings> {
+  return unsafeRequest<AdminSettings>("PUT", "/admin/settings", csrfToken, input);
+}
+
+export function clearPlanningApiKey(csrfToken: string): Promise<AdminSettings> {
+  return unsafeRequest<AdminSettings>("DELETE", "/admin/settings/planning/api-key", csrfToken);
 }
 
 export function updatePlanSelection(

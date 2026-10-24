@@ -1,6 +1,8 @@
 import { DEFAULT_PLANNING_LIMITS } from "./agent/limits";
 import { loadConfig } from "./config";
+import { SERVICE_NAME } from "./health";
 import { processJobOnce } from "./job-loop";
+import { createLogger } from "./logging/logger";
 import { type AuditSink, JsonLineAuditSink, MemoryAuditSink } from "./repository/audit";
 
 /**
@@ -27,6 +29,11 @@ const audit: AuditSink =
   config.ingestion.auditLogPath === null
     ? new MemoryAuditSink()
     : new JsonLineAuditSink(config.ingestion.auditLogPath);
+const logger = createLogger({
+  service: SERVICE_NAME,
+  level: config.logLevel,
+  format: config.logFormat,
+});
 
 let processed = 0;
 while (processed < MAX_ITERATIONS) {
@@ -36,15 +43,14 @@ while (processed < MAX_ITERATIONS) {
     allowedGitHosts: config.ingestion.allowedGitHosts,
     ingestionLimits: config.ingestion.limits,
     planningLimits: DEFAULT_PLANNING_LIMITS,
+    planningProvider: config.planning.provider,
+    planningModel: config.planning.model,
     audit,
+    logger,
   });
   if (result === null) break;
   processed += 1;
-  process.stdout.write(
-    `${JSON.stringify({ level: "info", service: "analysis-worker", event: "job_processed", ...result })}\n`,
-  );
+  logger.info("job_processed", { ...result });
 }
 
-process.stdout.write(
-  `${JSON.stringify({ level: "info", service: "analysis-worker", event: "loop_idle", processed })}\n`,
-);
+logger.info("loop_idle", { processed });

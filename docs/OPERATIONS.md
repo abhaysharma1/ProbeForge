@@ -11,22 +11,45 @@ commands are read-only or local unless stated.
 
 ## Structured logging and correlation IDs
 
-Every Rust service initializes logging through `probe_forge_observability::init_tracing`.
+Every Rust service initializes logging through `probe_forge_observability::init_tracing`;
+the analysis worker initializes `services/analysis-worker/src/logging/logger.ts`. Both
+implementations share one contract so the control plane and the workers read the same way in
+an aggregator:
 
-- `RUST_LOG` sets the filter (default `info`).
-- `PROBE_FORGE_LOG_FORMAT=json` emits line-delimited JSON for log aggregation;
-  any other value keeps the human-readable format.
-- The API attaches an `http_request` span with a `request_id` field to every
-  request. A caller-supplied `X-Request-Id` is used only when it is bounded
-  printable ASCII; otherwise one is generated. The chosen ID is echoed on the
-  `X-Request-Id` response header, so a client-visible failure can be tied to the
-  server log lines for that request.
+- **Levels.** `error` = an operation failed and needs operator attention; `warn` = a
+  recoverable failure, a security denial, lease loss, or a degraded state; `info` = a
+  lifecycle/outcome transition (claim, completion, schedule promotion, service start/stop);
+  `debug` = per-step diagnosis. Hot paths stay at `debug` so `info` output is meaningful.
+- **Events.** Every line carries a stable `event` name in `snake_case` (for example
+  `job.claimed`, `run.completed`, `target.destination_blocked`) plus the identifiers in scope:
+  `request_id`, `project_id`, `job_id`, `run_id`, `worker_id`. Failures also carry the stable
+  `error_code` persisted to the database.
+- **Coverage.** Libraries (`crates/queue`, `crates/target-policy`, `crates/execution-adapters`,
+  `crates/load-runner`) emit `tracing` events but never initialize a subscriber; only service
+  binaries call `init_tracing`. The API logs mutations and denials (not every read); the
+  scheduler, execution worker, and analysis worker log claims, outcomes, retries, and
+  lease/recovery events.
 
-Secrets are removed before any value is logged, stored in a report, or exported.
-The single redaction implementation lives in `crates/observability` and replaces
-sensitive object keys (`authorization`, `cookie`, `password`, `token`, ...) and
-inline credential markers (`Bearer`, `Basic`, `Authorization:`, `Cookie:`, and
-JWT-shaped tokens) with `[redacted]`.
+Configuration:
+
+| Variable | Service | Meaning |
+|---|---|---|
+| `RUST_LOG` | Rust services | Filter expression (default `info`) |
+| `PROBE_FORGE_LOG_FORMAT` | Rust services | `json` emits line-delimited JSON; anything else is human-readable |
+| `PROBE_FORGE_LOG_LEVEL` | analysis worker | `trace`/`debug`/`info`/`warn`/`error` (default `info`) |
+| `PROBE_FORGE_LOG_FORMAT` | analysis worker | `json` (default) or `text` |
+
+The API attaches an `http_request` span with `service`, `request_id`, `method`, and `path` to
+every request. A caller-supplied `X-Request-Id` is used only when it is bounded printable ASCII;
+otherwise one is generated. The chosen ID is echoed on the `X-Request-Id` response header, so a
+client-visible failure can be tied to the server log lines for that request.
+
+Secrets are removed before any value is logged, stored in a report, or exported. The single Rust
+redaction implementation lives in `crates/observability` and replaces sensitive object keys
+(`authorization`, `cookie`, `password`, `token`, ...) and inline credential markers (`Bearer`,
+`Basic`, `Authorization:`, `Cookie:`, and JWT-shaped tokens) with `[redacted]`. The analysis
+worker mirrors this in `logging/logger.ts`. When changing either, keep the sensitive-key list and
+marker handling in sync.
 
 ## Metrics and diagnostics
 
@@ -126,6 +149,31 @@ by the `reject_immutable_row` trigger: every UPDATE and every DELETE is rejected
 `probe_forge_queue::run_retention` does. Ordinary code paths keep full
 tamper-resistance; this is asserted by a regression test. Repository working
 directories are cleaned by the ingestion worker, not this purge.
+
+## Platform settings (admin dashboard)
+
+A **platform administrator** is a settings-only operator: it can manage global
+configuration and nothing cross-tenant. It is seeded by `bun run user:seed`
+(`admin@probeforge.local`).
+
+- `GET /api/admin/settings` — read all settings (never the secret).
+- `PUT /api/admin/settings` — update planning, rate limits, retention, and
+  project defaults; optionally set a new provider API key.
+- `DELETE /api/admin/settings/planning/api-key` — clear the stored key.
+
+| Group | Effect |
+|---|---|
+| Planning (Pi) | The analysis worker reads provider/model/limits per job and passes the decrypted key into the Pi stream call. DB overrides env; with none set, the deterministic fallback planner runs. |
+| API rate limits | Applied live to new requests via a cached copy. |
+| Retention | The scheduler reads the windows on each retention tick. |
+| Project defaults | The execution worker uses the default active-run cap at claim time; per-project `project_quotas` rows override it. |
+
+Provider API keys are stored **only as AES-256-GCM ciphertext** with the master
+key from `PROBE_FORGE_SETTINGS_KEY` (base64, 32 bytes). They are write-only:
+the API returns only a `••••1234` hint, and no code logs them. Saving a key
+without the master key configured fails closed. Values are validated for shape
+and range; provider/model are additionally validated against the pinned SDK
+catalog when a job runs.
 
 ## Backup and restore
 

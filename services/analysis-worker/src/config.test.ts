@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { DEFAULT_PLANNING_LIMITS } from "./agent/limits";
-import { loadConfig, WorkerConfigError } from "./config";
+import { loadConfig, type WorkerConfig, WorkerConfigError } from "./config";
 import { DEFAULT_INGESTION_LIMITS } from "./repository/limits";
 
-const DEFAULT_CONFIG = {
+const DEFAULT_CONFIG: WorkerConfig = {
   hostname: "127.0.0.1",
   port: 8090,
   ingestion: {
@@ -19,6 +19,8 @@ const DEFAULT_CONFIG = {
   },
   jobLoop: false,
   jobLoopIntervalMs: 5_000,
+  logLevel: "info",
+  logFormat: "json",
 };
 
 describe("loadConfig", () => {
@@ -114,6 +116,18 @@ describe("loadConfig", () => {
     expect(config.planning.limits.maxToolCalls).toBe(10);
     expect(config.planning.limits.maxWallTimeMs).toBe(30_000);
     expect(config.planning.limits.maxPlannedTests).toBe(8);
+  });
+
+  it("accepts explicit logging level and format and rejects invalid ones", () => {
+    const config = loadConfig({
+      PROBE_FORGE_LOG_LEVEL: "debug",
+      PROBE_FORGE_LOG_FORMAT: "text",
+    });
+    expect(config.logLevel).toBe("debug");
+    expect(config.logFormat).toBe("text");
+
+    expect(() => loadConfig({ PROBE_FORGE_LOG_LEVEL: "verbose" })).toThrow(WorkerConfigError);
+    expect(() => loadConfig({ PROBE_FORGE_LOG_FORMAT: "xml" })).toThrow(WorkerConfigError);
   });
 
   it("rejects partial, malformed, or unsafe planning configuration", () => {

@@ -255,6 +255,13 @@ async fn update_plan_selection(
         ));
     }
     if row.revision != payload.expected_revision {
+        tracing::warn!(
+            event = "plan.stale_revision",
+            plan_id = %plan_id,
+            expected_revision = payload.expected_revision,
+            actual_revision = row.revision,
+            "plan edit or approval refused: stale revision"
+        );
         return Err(plan_conflict());
     }
     ensure_current_plan(&mut transaction, &row).await?;
@@ -335,6 +342,16 @@ async fn update_plan_selection(
     .map_err(ApiError::database)?;
 
     transaction.commit().await.map_err(ApiError::database)?;
+    tracing::info!(
+        event = "plan.selection_updated",
+        plan_id = %plan_id,
+        project_id = %row.project_id,
+        user_id = %context.user.id,
+        revision,
+        selected_tests = payload.selected_test_ids.len(),
+        selected_scenarios = payload.selected_load_scenario_ids.len(),
+        "plan selection updated"
+    );
     let updated = load_plan_row(&state.pool, plan_id).await?;
     Ok(Json(build_plan_dto(&state.pool, updated).await?))
 }
@@ -366,6 +383,12 @@ async fn approve_plan(
         return Err(plan_not_found());
     }
     if row.status == "approved" {
+        tracing::warn!(
+            event = "plan.approve_conflict",
+            plan_id = %plan_id,
+            project_id = %row.project_id,
+            "approval refused: plan is already approved"
+        );
         return Err(ApiError::conflict(
             "plan_already_approved",
             "This plan has already been approved.",
@@ -378,6 +401,13 @@ async fn approve_plan(
         ));
     }
     if row.revision != payload.expected_revision {
+        tracing::warn!(
+            event = "plan.stale_revision",
+            plan_id = %plan_id,
+            expected_revision = payload.expected_revision,
+            actual_revision = row.revision,
+            "plan edit or approval refused: stale revision"
+        );
         return Err(plan_conflict());
     }
     ensure_current_plan(&mut transaction, &row).await?;
@@ -534,6 +564,18 @@ async fn approve_plan(
     .map_err(ApiError::database)?;
 
     transaction.commit().await.map_err(ApiError::database)?;
+    tracing::info!(
+        event = "plan.approved",
+        plan_id = %plan_id,
+        approval_id = %approval_id,
+        job_id = %row.job_id,
+        project_id = %row.project_id,
+        user_id = %context.user.id,
+        plan_version = row.version,
+        approved_tests = approved_test_ids.len(),
+        approved_scenarios = approved_load_scenario_ids.len(),
+        "plan approved"
+    );
     let updated = load_plan_row(&state.pool, plan_id).await?;
     Ok(Json(build_plan_dto(&state.pool, updated).await?))
 }
@@ -845,6 +887,11 @@ fn require_plan_writer(role: ProjectRole) -> Result<(), ApiError> {
     if role.can_review_plans() {
         Ok(())
     } else {
+        tracing::warn!(
+            event = "plan.write_forbidden",
+            role = ?role,
+            "plan edit or approval denied: insufficient project role"
+        );
         Err(ApiError::forbidden(
             "forbidden",
             "You do not have permission to edit or approve plans in this project.",

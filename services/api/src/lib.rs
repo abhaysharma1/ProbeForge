@@ -1,3 +1,4 @@
+pub mod admin;
 pub mod audit;
 pub mod auth;
 pub mod catalog;
@@ -6,11 +7,13 @@ pub mod error;
 pub mod http_middleware;
 pub mod jobs;
 pub mod plans;
+pub mod platform_settings;
 pub mod projects;
 pub mod quotas;
 pub mod rate_limit;
 pub mod results;
 pub mod runs;
+pub mod settings_secrets;
 pub mod targets;
 
 use std::{fmt, net::SocketAddr, sync::Arc, time::Duration};
@@ -183,14 +186,22 @@ pub struct AppState {
     pub pool: PgPool,
     pub config: Arc<AuthConfig>,
     pub target_policy: Arc<TargetPolicy>,
+    /// Cached platform settings the request path needs (rate limits). Refreshed
+    /// at startup and after an admin update.
+    pub runtime_limits: Arc<tokio::sync::RwLock<crate::platform_settings::RuntimeLimits>>,
 }
 
 impl AppState {
     pub fn new(pool: PgPool, config: AuthConfig) -> Self {
+        let runtime_limits = crate::platform_settings::RuntimeLimits {
+            api_requests_per_minute: config.api_requests_per_minute,
+            expensive_requests_per_minute: config.expensive_requests_per_minute,
+        };
         Self {
             pool,
             config: Arc::new(config),
             target_policy: Arc::new(TargetPolicy::default()),
+            runtime_limits: Arc::new(tokio::sync::RwLock::new(runtime_limits)),
         }
     }
 
@@ -199,10 +210,15 @@ impl AppState {
         config: AuthConfig,
         target_policy: TargetPolicy,
     ) -> Self {
+        let runtime_limits = crate::platform_settings::RuntimeLimits {
+            api_requests_per_minute: config.api_requests_per_minute,
+            expensive_requests_per_minute: config.expensive_requests_per_minute,
+        };
         Self {
             pool,
             config: Arc::new(config),
             target_policy: Arc::new(target_policy),
+            runtime_limits: Arc::new(tokio::sync::RwLock::new(runtime_limits)),
         }
     }
 }
@@ -237,6 +253,7 @@ pub fn router(state: AppState) -> Router {
         .merge(results::routes())
         .merge(quotas::routes())
         .merge(runs::routes())
+        .merge(admin::routes())
         // Authentication runs before CSRF so an anonymous unsafe request gets a
         // consistent 401 rather than a CSRF 403. Authenticated unsafe requests
         // still pass through the CSRF guard. Rate limiting runs after auth (so
@@ -358,6 +375,10 @@ pub async fn serve(config: Config) -> Result<(), ServeError> {
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
     info!(addr = %config.bind_addr, service = SERVICE_NAME, "service listening");
     let state = AppState::new_with_target_policy(pool, config.auth, config.target_policy);
+    if let Ok(Some(row)) = crate::platform_settings::load_row(&state.pool).await {
+        *state.runtime_limits.write().await =
+            crate::platform_settings::RuntimeLimits::from_row(&row);
+    }
     axum::serve(
         listener,
         router(state).into_make_service_with_connect_info::<SocketAddr>(),

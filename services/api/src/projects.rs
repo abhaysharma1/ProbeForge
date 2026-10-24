@@ -282,6 +282,12 @@ async fn create_project(
     let row = fetch_project_row(&mut transaction, context.user.id, project_id).await?;
     transaction.commit().await.map_err(ApiError::database)?;
 
+    tracing::info!(
+        event = "project.created",
+        project_id = %row.id,
+        user_id = %context.user.id,
+        "project created"
+    );
     Ok((StatusCode::CREATED, Json(project_from_row(row)?)).into_response())
 }
 
@@ -317,6 +323,12 @@ async fn update_project(
     let mut transaction = state.pool.begin().await.map_err(ApiError::database)?;
     let role = lock_actor_role(&mut transaction, project_id, context.user.id).await?;
     if !role.can_manage_project() {
+        tracing::warn!(
+            event = "project.update_forbidden",
+            project_id = %project_id,
+            user_id = %context.user.id,
+            "project update denied: insufficient project role"
+        );
         return Err(ApiError::forbidden(
             "forbidden",
             "You do not have permission to update this project.",
@@ -360,6 +372,14 @@ async fn update_project(
 
     let row = fetch_project_row(&mut transaction, context.user.id, project_id).await?;
     transaction.commit().await.map_err(ApiError::database)?;
+    tracing::info!(
+        event = "project.updated",
+        project_id = %project_id,
+        user_id = %context.user.id,
+        name_changed = changed_name,
+        slug_changed = changed_slug,
+        "project updated"
+    );
     Ok(Json(project_from_row(row)?))
 }
 
@@ -416,6 +436,12 @@ async fn add_member(
     let mut transaction = state.pool.begin().await.map_err(ApiError::database)?;
     let actor_role = lock_actor_role(&mut transaction, project_id, context.user.id).await?;
     if !actor_role.can_manage_members() || !actor_role.can_manage_member(payload.role) {
+        tracing::warn!(
+            event = "project.member_add_forbidden",
+            project_id = %project_id,
+            user_id = %context.user.id,
+            "member add denied: insufficient project role"
+        );
         return Err(ApiError::forbidden(
             "forbidden",
             "You do not have permission to add this member.",
@@ -463,6 +489,14 @@ async fn add_member(
 
     let member = fetch_member(&mut transaction, project_id, target_id).await?;
     transaction.commit().await.map_err(ApiError::database)?;
+    tracing::info!(
+        event = "project.member_added",
+        project_id = %project_id,
+        actor_id = %context.user.id,
+        member_user_id = %target_id,
+        role = role_to_db(payload.role),
+        "project member added"
+    );
     Ok((StatusCode::CREATED, Json(member)).into_response())
 }
 
@@ -482,6 +516,12 @@ async fn update_member(
     let mut transaction = state.pool.begin().await.map_err(ApiError::database)?;
     let actor_role = lock_actor_role(&mut transaction, project_id, context.user.id).await?;
     if !actor_role.can_manage_members() {
+        tracing::warn!(
+            event = "project.member_update_forbidden",
+            project_id = %project_id,
+            user_id = %context.user.id,
+            "member update denied: insufficient project role"
+        );
         return Err(ApiError::forbidden(
             "forbidden",
             "You do not have permission to change project members.",
@@ -509,6 +549,13 @@ async fn update_member(
         ));
     }
     if !actor_role.can_manage_member(payload.role) {
+        tracing::warn!(
+            event = "project.member_update_forbidden",
+            project_id = %project_id,
+            user_id = %context.user.id,
+            reason = "role_not_assignable",
+            "member update denied: actor cannot assign that role"
+        );
         return Err(ApiError::forbidden(
             "forbidden",
             "You cannot assign that role.",
@@ -543,6 +590,14 @@ async fn update_member(
 
     let member = fetch_member(&mut transaction, project_id, user_id).await?;
     transaction.commit().await.map_err(ApiError::database)?;
+    tracing::info!(
+        event = "project.member_role_changed",
+        project_id = %project_id,
+        actor_id = %context.user.id,
+        member_user_id = %user_id,
+        role = role_to_db(payload.role),
+        "project member role changed"
+    );
     Ok(Json(member))
 }
 
@@ -554,6 +609,12 @@ async fn remove_member(
     let mut transaction = state.pool.begin().await.map_err(ApiError::database)?;
     let actor_role = lock_actor_role(&mut transaction, project_id, context.user.id).await?;
     if !actor_role.can_manage_members() {
+        tracing::warn!(
+            event = "project.member_remove_forbidden",
+            project_id = %project_id,
+            user_id = %context.user.id,
+            "member removal denied: insufficient project role"
+        );
         return Err(ApiError::forbidden(
             "forbidden",
             "You do not have permission to remove project members.",
@@ -601,6 +662,13 @@ async fn remove_member(
     .map_err(ApiError::database)?;
 
     transaction.commit().await.map_err(ApiError::database)?;
+    tracing::info!(
+        event = "project.member_removed",
+        project_id = %project_id,
+        actor_id = %context.user.id,
+        member_user_id = %user_id,
+        "project member removed"
+    );
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -620,6 +688,12 @@ async fn transfer_owner(
     let mut transaction = state.pool.begin().await.map_err(ApiError::database)?;
     let actor_role = lock_actor_role(&mut transaction, project_id, context.user.id).await?;
     if actor_role != ProjectRole::Owner {
+        tracing::warn!(
+            event = "project.ownership_transfer_forbidden",
+            project_id = %project_id,
+            user_id = %context.user.id,
+            "ownership transfer denied: only the owner may transfer"
+        );
         return Err(ApiError::forbidden(
             "forbidden",
             "Only the project owner can transfer ownership.",
@@ -677,6 +751,13 @@ async fn transfer_owner(
 
     let row = fetch_project_row(&mut transaction, context.user.id, project_id).await?;
     transaction.commit().await.map_err(ApiError::database)?;
+    tracing::info!(
+        event = "project.owner_transferred",
+        project_id = %project_id,
+        previous_owner_id = %context.user.id,
+        new_owner_id = %payload.user_id,
+        "project ownership transferred"
+    );
     Ok(Json(project_from_row(row)?))
 }
 

@@ -35,9 +35,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match dispatch_once(&pool, &config).await {
             Ok(Some(run)) => {
                 tracing::info!(
+                    event = "run.dispatched",
                     run_id = %run.run_id,
                     run_type = %run.run_type,
                     status = run.status,
+                    worker_id = %config.worker_id,
                     "dispatched run"
                 );
             }
@@ -48,7 +50,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tokio::time::sleep(Duration::from_secs(2)).await;
             }
             Err(error) => {
-                tracing::warn!(error = %error, "dispatch attempt failed");
+                tracing::warn!(
+                    event = "run.dispatch_failed",
+                    error = %error,
+                    worker_id = %config.worker_id,
+                    "dispatch attempt failed"
+                );
                 if once {
                     break;
                 }

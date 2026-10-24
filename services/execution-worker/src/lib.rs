@@ -180,15 +180,32 @@ async fn run_dispatch_loop(pool: sqlx::PgPool, worker_id: String, allow_private_
     let mut config = DispatchConfig::new(worker_id);
     config.allow_private_targets = allow_private_targets;
     loop {
+        // The platform default concurrency cap is admin-configurable and applied
+        // live; a per-project quota row still overrides it at claim time.
+        if let Ok(Some(value)) = sqlx::query_scalar::<_, i32>(
+            "SELECT default_max_active_runs FROM platform_settings WHERE id = true",
+        )
+        .fetch_optional(&pool)
+        .await
+        {
+            config.max_active_per_project = i64::from(value);
+        }
         match dispatch_once(&pool, &config).await {
             Ok(Some(run)) => info!(
+                event = "run.dispatched",
                 run_id = %run.run_id,
                 run_type = %run.run_type,
                 status = run.status,
+                worker_id = %config.worker_id,
                 "dispatched run"
             ),
             Ok(None) => {}
-            Err(error) => warn!(error = %error, "dispatch attempt failed"),
+            Err(error) => warn!(
+                event = "run.dispatch_failed",
+                error = %error,
+                worker_id = %config.worker_id,
+                "dispatch attempt failed"
+            ),
         }
         tokio::time::sleep(DISPATCH_POLL_INTERVAL).await;
     }

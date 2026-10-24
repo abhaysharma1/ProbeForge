@@ -592,6 +592,13 @@ async fn generate_report(
         .ok_or_else(|| ApiError::internal("run membership role is invalid"))?;
     require_report_writer(role)?;
     let report = build_and_store_report(&state.pool, &run, context.user.id).await?;
+    tracing::info!(
+        event = "report.generated",
+        run_id = %run.id,
+        project_id = %run.project_id,
+        user_id = %context.user.id,
+        "report generated"
+    );
     Ok((StatusCode::CREATED, Json(report)))
 }
 
@@ -1285,7 +1292,16 @@ async fn mark_report_failed(
     )
     .await
     .map_err(ApiError::database)?;
-    transaction.commit().await.map_err(ApiError::database)
+    transaction.commit().await.map_err(ApiError::database)?;
+    tracing::warn!(
+        event = "report.failed",
+        run_id = %run.id,
+        project_id = %run.project_id,
+        report_type,
+        error_code = code,
+        "report generation failed; stored results were preserved"
+    );
+    Ok(())
 }
 
 fn generate_recommendations(
@@ -1589,6 +1605,10 @@ fn report_type_for(run_type: &str) -> &'static str {
 
 fn require_report_writer(role: ProjectRole) -> Result<(), ApiError> {
     if matches!(role, ProjectRole::Viewer) {
+        tracing::warn!(
+            event = "report.generate_forbidden",
+            "report generation denied: viewers cannot generate reports"
+        );
         Err(ApiError::forbidden(
             "forbidden",
             "Viewers cannot generate reports.",

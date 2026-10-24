@@ -3,6 +3,8 @@ import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { loadConfig, WorkerConfigError } from "./config";
 import { discoverApplication } from "./discovery";
+import { SERVICE_NAME } from "./health";
+import { createLogger } from "./logging/logger";
 import { JsonLineAuditSink } from "./repository/audit";
 import { RepositoryIngestError } from "./repository/errors";
 import { validateGitUrl } from "./repository/git-url";
@@ -165,6 +167,17 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       throw new UsageError("--audit-log is required (or set PROBE_FORGE_ANALYSIS_AUDIT_LOG)");
     }
     const audit = new JsonLineAuditSink(auditLog);
+    const logger = createLogger({
+      service: SERVICE_NAME,
+      level: config.logLevel,
+      format: config.logFormat,
+    });
+
+    logger.info("ingest.started", {
+      provider: target.provider,
+      reference: parsed.reference,
+      fixture: parsed.fixture !== null,
+    });
 
     await withRepositorySnapshot(
       {
@@ -178,9 +191,17 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
         allowLocalFixtures: parsed.fixture !== null,
       },
       async (session) => {
+        logger.info("ingest.snapshot_created", {
+          commitSha: session.snapshot.commitSha,
+          fileCount: session.snapshot.analysisMetadata.fileCount,
+          truncated: session.snapshot.filesTruncated,
+        });
         await writeSnapshot(parsed.output, session.snapshot);
         if (parsed.discoveryOutput !== null) {
           const inventory = await discoverApplication(session);
+          logger.info("ingest.discovery_completed", {
+            commitSha: session.snapshot.commitSha,
+          });
           await writeSnapshot(parsed.discoveryOutput, inventory);
         }
       },

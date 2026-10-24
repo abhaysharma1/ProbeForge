@@ -35,6 +35,7 @@ export function createPiPlanningRuntime(
   providerValue: string | null,
   modelValue: string | null,
   limits: PlanningLimits,
+  apiKey: string | null = null,
 ): PlanningRuntime {
   const provider = providerValue?.trim() ?? "";
   const model = modelValue?.trim() ?? "";
@@ -64,6 +65,7 @@ export function createPiPlanningRuntime(
         : Math.min(requestedTokens, limits.maxResponseTokens);
     return models.streamSimple(requestModel, context, {
       ...options,
+      ...(apiKey !== null && apiKey.trim().length > 0 ? { apiKey } : {}),
       maxTokens,
       temperature: 0,
     });

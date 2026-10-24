@@ -170,6 +170,13 @@ async fn execute_spec(
     timeout: Duration,
 ) -> AdapterResult {
     let started = Instant::now();
+    tracing::debug!(
+        event = "adapter.started",
+        catalog_test_id = spec.catalog_test_id,
+        adapter = spec.adapter_name,
+        adapter_version = spec.adapter_version,
+        "adapter execution started"
+    );
     let mut result = match tokio::time::timeout(
         timeout,
         run_adapter(spec, environment, configuration, budget),
@@ -185,6 +192,17 @@ async fn execute_spec(
         ),
     };
     result.duration_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
+    tracing::info!(
+        event = "adapter.executed",
+        catalog_test_id = %result.catalog_test_id,
+        adapter = %result.adapter_name,
+        adapter_version = %result.adapter_version,
+        execution_status = ?result.execution_status,
+        security_outcome = ?result.security_outcome,
+        duration_ms = result.duration_ms,
+        error_code = ?result.error_code,
+        "adapter execution finished"
+    );
     result
 }
 
@@ -507,6 +525,11 @@ fn failure_result(
 }
 
 fn unsupported_result(catalog_test_id: &str) -> AdapterResult {
+    tracing::warn!(
+        event = "adapter.unsupported",
+        catalog_test_id,
+        "no vetted adapter exists for this catalog test; failing closed"
+    );
     AdapterResult {
         catalog_test_id: catalog_test_id.to_owned(),
         adapter_name: "none".to_owned(),

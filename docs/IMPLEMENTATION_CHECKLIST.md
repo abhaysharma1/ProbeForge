@@ -395,6 +395,8 @@ Legend: `[x]` done with evidence - `[ ]` not done.
 **Tasks**
 
 - [x] Add structured logs with correlation IDs and redaction - `crates/observability`; the API middleware attaches and echoes a correlation ID and seeds a `http_request` span.
+- [x] Extend structured logging to every library and service - one contract (levels, `event` names, correlation fields, redaction) across `crates/queue`, `crates/target-policy`, `crates/execution-adapters`, `crates/load-runner`, the API handlers (mutations and denials), and the scheduler/execution-worker loops; libraries emit events but never initialize a subscriber (D-043).
+- [x] Give the analysis worker a dependency-free structured logger - `services/analysis-worker/src/logging/logger.ts` with `PROBE_FORGE_LOG_LEVEL`/`PROBE_FORGE_LOG_FORMAT`, child loggers, and redaction parity with the Rust crate; wired through `index.ts`, `job-cli.ts`, `job-loop.ts`, and `ingest-cli.ts`.
 - [x] Add worker health, queue depth, lease-expiry, failure-rate, and execution-duration metrics - `probe_forge_queue::queue_metrics` and `GET /metricsz` on the scheduler.
 - [x] Add per-project quotas, concurrency limits, request budgets, and fair scheduling - `project_quotas`, `claim_due_run_fair` enforcement, `GET|PUT /api/projects/{id}/quota`.
 - [x] Add retention policies for repositories, evidence, reports, and events - `run_retention` via the single sanctioned purge path; repository workspaces are cleaned by ingestion.
@@ -414,6 +416,8 @@ Legend: `[x]` done with evidence - `[ ]` not done.
 **Evidence**
 
 - Shared crate: `crates/observability/`
+- Analysis worker logger: `services/analysis-worker/src/logging/logger.ts` (+ `logger.test.ts`)
+- Logging contract and config: `docs/OPERATIONS.md`
 - Queue quotas, metrics, retention: `crates/queue/src/lib.rs`
 - API middleware/rate limit/quotas: `services/api/src/http_middleware.rs`, `rate_limit.rs`, `quotas.rs`
 - Scheduler metrics and retention loop: `services/scheduler/src/lib.rs`
@@ -421,6 +425,7 @@ Legend: `[x]` done with evidence - `[ ]` not done.
 - Tests: `services/api/tests/operations.rs`
 - Tooling and runbook: `scripts/db-backup.mjs`, `docs/OPERATIONS.md`
 - Report: `docs/phases/14_observability_operations_report.md`
+- Logging hardening report: `docs/phases/14a_logging_hardening_report.md`
 
 ## Phase 15 — End-to-end acceptance using local fixtures
 

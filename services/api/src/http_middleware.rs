@@ -32,7 +32,13 @@ pub async fn request_id(mut request: Request, next: Next) -> Response {
         .unwrap_or_else(RequestId::generate);
 
     request.extensions_mut().insert(id.clone());
-    let span = tracing::info_span!("http_request", request_id = %id);
+    let span = tracing::info_span!(
+        "http_request",
+        service = crate::SERVICE_NAME,
+        request_id = %id,
+        method = %request.method(),
+        path = %request.uri().path(),
+    );
     let mut response = next.run(request).instrument(span).await;
 
     if let Ok(value) = HeaderValue::from_str(id.as_str()) {
@@ -52,10 +58,11 @@ pub async fn rate_limit(
 ) -> Result<Response, ApiError> {
     if let Some(context) = request.extensions().get::<AuthContext>() {
         let expensive = is_expensive_request(request.method(), request.uri().path());
+        let limits = *state.runtime_limits.read().await;
         let (scope, limit) = if expensive {
-            (SCOPE_EXPENSIVE, state.config.expensive_requests_per_minute)
+            (SCOPE_EXPENSIVE, limits.expensive_requests_per_minute)
         } else {
-            (SCOPE_API, state.config.api_requests_per_minute)
+            (SCOPE_API, limits.api_requests_per_minute)
         };
         rate_limits::enforce(
             &state.pool,
@@ -64,7 +71,15 @@ pub async fn rate_limit(
             limit,
             RATE_WINDOW_SECONDS,
         )
-        .await?;
+        .await
+        .inspect_err(|_error| {
+            tracing::warn!(
+                event = "api.rate_limited",
+                scope,
+                limit,
+                "request rejected by the API rate limit"
+            );
+        })?;
     }
     Ok(next.run(request).await)
 }
