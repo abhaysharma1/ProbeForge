@@ -43,6 +43,8 @@ pub enum QueueError {
     IneligibleSchedule,
     #[error("schedule start/expiry is invalid")]
     InvalidScheduleWindow,
+    #[error("retention policy is outside the allowed range")]
+    InvalidRetention,
 }
 
 #[derive(Debug, Clone, FromRow)]
@@ -972,6 +974,371 @@ fn normalize_timezone(value: &str) -> Result<(String, FixedOffset), QueueError> 
     Err(QueueError::InvalidTimezone)
 }
 
+// ---------------------------------------------------------------------------
+// Per-project quotas
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, FromRow)]
+pub struct ProjectQuota {
+    pub project_id: Uuid,
+    pub max_active_runs: i32,
+    pub max_requests_per_window: Option<i64>,
+    pub window_seconds: i32,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewProjectQuota {
+    pub project_id: Uuid,
+    pub max_active_runs: i32,
+    pub max_requests_per_window: Option<i64>,
+    pub window_seconds: i32,
+}
+
+/// Create or replace a project's quota. Values are validated against the same
+/// bounds the claim query relies on so a bad value can never widen a cap.
+pub async fn set_project_quota(
+    pool: &PgPool,
+    input: NewProjectQuota,
+) -> Result<ProjectQuota, QueueError> {
+    validate_quota(i64::from(input.max_active_runs))?;
+    validate_window(i64::from(input.window_seconds))?;
+    if let Some(budget) = input.max_requests_per_window {
+        validate_request_budget(budget)?;
+    }
+
+    let row = sqlx::query_as::<_, ProjectQuota>(
+        r#"
+        INSERT INTO project_quotas (
+            project_id, max_active_runs, max_requests_per_window, window_seconds
+        ) VALUES ($1, $2, $3, $4)
+        ON CONFLICT (project_id) DO UPDATE SET
+            max_active_runs = EXCLUDED.max_active_runs,
+            max_requests_per_window = EXCLUDED.max_requests_per_window,
+            window_seconds = EXCLUDED.window_seconds,
+            updated_at = now()
+        RETURNING project_id, max_active_runs, max_requests_per_window, window_seconds
+        "#,
+    )
+    .bind(input.project_id)
+    .bind(input.max_active_runs)
+    .bind(input.max_requests_per_window)
+    .bind(input.window_seconds)
+    .fetch_one(pool)
+    .await?;
+    Ok(row)
+}
+
+/// Load a project's quota override, if one exists.
+pub async fn project_quota(
+    pool: &PgPool,
+    project_id: Uuid,
+) -> Result<Option<ProjectQuota>, QueueError> {
+    let row = sqlx::query_as::<_, ProjectQuota>(
+        r#"
+        SELECT project_id, max_active_runs, max_requests_per_window, window_seconds
+        FROM project_quotas
+        WHERE project_id = $1
+        "#,
+    )
+    .bind(project_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
+// ---------------------------------------------------------------------------
+// Operational metrics
+// ---------------------------------------------------------------------------
+
+const FAILURE_WINDOW_SECONDS: i64 = 3_600;
+const DURATION_WINDOW_SECONDS: i64 = 86_400;
+
+/// A snapshot of queue health for operator diagnostics. Counts are aggregate
+/// and carry no tenant content, so they are safe to expose on an internal
+/// metrics endpoint.
+#[derive(Debug, Clone, FromRow, serde::Serialize)]
+pub struct QueueMetrics {
+    pub jobs_queued: i64,
+    pub jobs_active: i64,
+    pub jobs_failed: i64,
+    pub jobs_lease_expired: i64,
+    pub oldest_job_queue_age_seconds: Option<f64>,
+    pub runs_queued: i64,
+    pub runs_active: i64,
+    pub runs_failed: i64,
+    pub runs_lease_expired: i64,
+    pub oldest_run_queue_age_seconds: Option<f64>,
+    pub failed_window_seconds: i64,
+    pub jobs_failed_recent: i64,
+    pub runs_failed_recent: i64,
+    pub completed_run_avg_duration_seconds: Option<f64>,
+}
+
+/// Compute the current queue and worker-health metrics in one round trip.
+pub async fn queue_metrics(pool: &PgPool) -> Result<QueueMetrics, QueueError> {
+    let row: QueueMetrics = sqlx::query_as(
+        r#"
+        SELECT
+            (SELECT count(*) FROM jobs WHERE status = 'queued') AS jobs_queued,
+            (SELECT count(*) FROM jobs WHERE status IN ('analyzing', 'planning')) AS jobs_active,
+            (SELECT count(*) FROM jobs WHERE status = 'failed') AS jobs_failed,
+            (SELECT count(*) FROM jobs
+             WHERE status IN ('analyzing', 'planning')
+               AND lease_expires_at IS NOT NULL
+               AND lease_expires_at <= now()) AS jobs_lease_expired,
+            (SELECT EXTRACT(EPOCH FROM (now() - min(created_at)))::double precision
+             FROM jobs WHERE status = 'queued') AS oldest_job_queue_age_seconds,
+            (SELECT count(*) FROM test_runs WHERE status IN ('scheduled', 'queued')) AS runs_queued,
+            (SELECT count(*) FROM test_runs WHERE status = 'running') AS runs_active,
+            (SELECT count(*) FROM test_runs WHERE status = 'failed') AS runs_failed,
+            (SELECT count(*) FROM test_runs
+             WHERE status = 'running'
+               AND lease_expires_at IS NOT NULL
+               AND lease_expires_at <= now()) AS runs_lease_expired,
+            (SELECT EXTRACT(EPOCH FROM (now() - min(COALESCE(scheduled_for, created_at))))::double precision
+             FROM test_runs WHERE status IN ('scheduled', 'queued')) AS oldest_run_queue_age_seconds,
+            $1::bigint AS failed_window_seconds,
+            (SELECT count(*) FROM jobs
+             WHERE status = 'failed'
+               AND updated_at >= now() - make_interval(secs => $2::double precision)) AS jobs_failed_recent,
+            (SELECT count(*) FROM test_runs
+             WHERE status = 'failed'
+               AND finished_at IS NOT NULL
+               AND finished_at >= now() - make_interval(secs => $2::double precision)) AS runs_failed_recent,
+            (SELECT AVG(EXTRACT(EPOCH FROM (finished_at - started_at)))::double precision
+             FROM test_runs
+             WHERE status = 'completed'
+               AND started_at IS NOT NULL
+               AND finished_at IS NOT NULL
+               AND finished_at >= now() - make_interval(secs => $3::double precision)) AS completed_run_avg_duration_seconds
+        "#,
+    )
+    .bind(FAILURE_WINDOW_SECONDS)
+    .bind(FAILURE_WINDOW_SECONDS as f64)
+    .bind(DURATION_WINDOW_SECONDS as f64)
+    .fetch_one(pool)
+    .await?;
+    Ok(row)
+}
+
+// ---------------------------------------------------------------------------
+// Retention
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub struct RetentionPolicy {
+    pub evidence_batch: i64,
+    pub reports_batch: i64,
+    pub events_batch: i64,
+    pub counters_batch: i64,
+    pub report_retention_days: i32,
+    pub event_retention_days: i32,
+    pub counter_retention_days: i32,
+}
+
+impl Default for RetentionPolicy {
+    fn default() -> Self {
+        Self {
+            evidence_batch: 500,
+            reports_batch: 200,
+            events_batch: 2_000,
+            counters_batch: 2_000,
+            report_retention_days: 180,
+            event_retention_days: 30,
+            counter_retention_days: 7,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+pub struct RetentionOutcome {
+    pub evidence_deleted: u64,
+    pub reports_deleted: u64,
+    pub job_events_deleted: u64,
+    pub sessions_deleted: u64,
+    pub rate_limit_entries_deleted: u64,
+    pub login_attempt_entries_deleted: u64,
+}
+
+const MAX_RETENTION_DAYS: i32 = 3_650;
+
+/// Purge data past its retention window in bounded batches.
+///
+/// This is the single sanctioned path that may delete otherwise-immutable rows.
+/// It opts in with a transaction-local setting; every other path still hits the
+/// `reject_immutable_row` trigger. Recommendation-referenced evidence is
+/// retained so traceability constraints cannot be violated.
+pub async fn run_retention(
+    pool: &PgPool,
+    policy: &RetentionPolicy,
+) -> Result<RetentionOutcome, QueueError> {
+    for batch in [
+        policy.evidence_batch,
+        policy.reports_batch,
+        policy.events_batch,
+        policy.counters_batch,
+    ] {
+        validate_retention_batch(batch)?;
+    }
+    for days in [
+        policy.report_retention_days,
+        policy.event_retention_days,
+        policy.counter_retention_days,
+    ] {
+        if !(1..=MAX_RETENTION_DAYS).contains(&days) {
+            return Err(QueueError::InvalidRetention);
+        }
+    }
+
+    let mut transaction = pool.begin().await?;
+    sqlx::query("SET LOCAL probeforge.retention_purge = 'on'")
+        .execute(&mut *transaction)
+        .await?;
+
+    let evidence_deleted = sqlx::query(
+        r#"
+        DELETE FROM evidence
+        WHERE id IN (
+            SELECT e.id
+            FROM evidence e
+            WHERE e.retention_until IS NOT NULL
+              AND e.retention_until <= now()
+              AND NOT EXISTS (
+                  SELECT 1 FROM recommendations r WHERE r.evidence_id = e.id
+              )
+            ORDER BY e.retention_until
+            LIMIT $1
+        )
+        "#,
+    )
+    .bind(policy.evidence_batch)
+    .execute(&mut *transaction)
+    .await?
+    .rows_affected();
+
+    let reports_deleted = sqlx::query(
+        r#"
+        DELETE FROM reports
+        WHERE id IN (
+            SELECT id
+            FROM reports
+            WHERE created_at < now() - make_interval(days => $1::int)
+            ORDER BY created_at
+            LIMIT $2
+        )
+        "#,
+    )
+    .bind(policy.report_retention_days)
+    .bind(policy.reports_batch)
+    .execute(&mut *transaction)
+    .await?
+    .rows_affected();
+
+    let job_events_deleted = sqlx::query(
+        r#"
+        DELETE FROM job_events
+        WHERE id IN (
+            SELECT je.id
+            FROM job_events je
+            JOIN jobs j ON j.id = je.job_id
+            WHERE j.status IN ('failed', 'cancelled', 'expired')
+              AND je.occurred_at < now() - make_interval(days => $1::int)
+            ORDER BY je.occurred_at
+            LIMIT $2
+        )
+        "#,
+    )
+    .bind(policy.event_retention_days)
+    .bind(policy.events_batch)
+    .execute(&mut *transaction)
+    .await?
+    .rows_affected();
+
+    let sessions_deleted = sqlx::query(
+        r#"
+        DELETE FROM auth_sessions
+        WHERE id IN (
+            SELECT id
+            FROM auth_sessions
+            WHERE expires_at < now() - make_interval(days => $1::int)
+            ORDER BY expires_at
+            LIMIT $2
+        )
+        "#,
+    )
+    .bind(policy.counter_retention_days)
+    .bind(policy.counters_batch)
+    .execute(&mut *transaction)
+    .await?
+    .rows_affected();
+
+    let rate_limit_entries_deleted = sqlx::query(
+        r#"
+        DELETE FROM api_rate_limits
+        WHERE key_hash IN (
+            SELECT key_hash
+            FROM api_rate_limits
+            WHERE last_at < now() - make_interval(days => $1::int)
+            LIMIT $2
+        )
+        "#,
+    )
+    .bind(policy.counter_retention_days)
+    .bind(policy.counters_batch)
+    .execute(&mut *transaction)
+    .await?
+    .rows_affected();
+
+    let login_attempt_entries_deleted = sqlx::query(
+        r#"
+        DELETE FROM auth_login_attempts
+        WHERE key_hash IN (
+            SELECT key_hash
+            FROM auth_login_attempts
+            WHERE last_attempt_at < now() - make_interval(days => $1::int)
+            LIMIT $2
+        )
+        "#,
+    )
+    .bind(policy.counter_retention_days)
+    .bind(policy.counters_batch)
+    .execute(&mut *transaction)
+    .await?
+    .rows_affected();
+
+    transaction.commit().await?;
+
+    Ok(RetentionOutcome {
+        evidence_deleted,
+        reports_deleted,
+        job_events_deleted,
+        sessions_deleted,
+        rate_limit_entries_deleted,
+        login_attempt_entries_deleted,
+    })
+}
+
+fn validate_window(seconds: i64) -> Result<(), QueueError> {
+    if !(60..=604_800).contains(&seconds) {
+        return Err(QueueError::InvalidQuota);
+    }
+    Ok(())
+}
+
+fn validate_retention_batch(batch: i64) -> Result<(), QueueError> {
+    if !(1..=100_000).contains(&batch) {
+        return Err(QueueError::InvalidRetention);
+    }
+    Ok(())
+}
+
+fn validate_request_budget(budget: i64) -> Result<(), QueueError> {
+    if !(0..=1_000_000_000).contains(&budget) {
+        return Err(QueueError::InvalidQuota);
+    }
+    Ok(())
+}
+
 fn parse_recurrence(value: &str) -> Result<Recurrence, QueueError> {
     match value.trim().to_ascii_lowercase().as_str() {
         "once" => Ok(Recurrence::Once),
@@ -1017,7 +1384,9 @@ fn advance_local(scheduled_for: DateTime<Utc>, offset: FixedOffset, days: i64) -
 
 /// Claim one due run while enforcing global and per-project active-run quotas.
 /// A transaction advisory lock serializes quota checks so concurrent workers
-/// cannot both observe the same free slot.
+/// cannot both observe the same free slot. `max_active_per_project` is the
+/// default; a `project_quotas` row overrides both the active-run cap and adds an
+/// optional per-window request budget.
 pub async fn claim_due_run_fair(
     pool: &PgPool,
     worker_id: &str,
@@ -1066,7 +1435,42 @@ pub async fn claim_due_run_fair(
                   SELECT count(*) FROM test_runs active
                   WHERE active.status = 'running'
                     AND active.project_id = candidate.project_id
-              ) < $4
+              ) < COALESCE(
+                  (SELECT q.max_active_runs FROM project_quotas q
+                   WHERE q.project_id = candidate.project_id),
+                  $4
+              )
+              -- A per-project request budget, when configured, reserves the
+              -- candidate profile's maximum requests against the requests
+              -- already recorded in the current window. When no quota row or
+              -- no request budget exists the check is skipped (unlimited).
+              AND (
+                  (SELECT q.max_requests_per_window FROM project_quotas q
+                   WHERE q.project_id = candidate.project_id) IS NULL
+                  OR (
+                      COALESCE((
+                          SELECT SUM(rm.request_count)
+                          FROM run_metrics rm
+                          JOIN test_runs consumed ON consumed.id = rm.run_id
+                          WHERE consumed.project_id = candidate.project_id
+                            AND consumed.created_at >= now() - make_interval(
+                                secs => COALESCE(
+                                    (SELECT q2.window_seconds FROM project_quotas q2
+                                     WHERE q2.project_id = candidate.project_id),
+                                    86400
+                                )::double precision
+                            )
+                      ), 0)
+                      + COALESCE(
+                          (SELECT lp.max_requests FROM load_profiles lp
+                           WHERE lp.id = candidate.load_profile_id),
+                          0
+                      )
+                  ) <= (
+                      SELECT q3.max_requests_per_window FROM project_quotas q3
+                      WHERE q3.project_id = candidate.project_id
+                  )
+              )
             ORDER BY (
                 SELECT count(*) FROM test_runs active
                 WHERE active.status = 'running'

@@ -3,9 +3,12 @@ pub mod auth;
 pub mod catalog;
 pub mod cookies;
 pub mod error;
+pub mod http_middleware;
 pub mod jobs;
 pub mod plans;
 pub mod projects;
+pub mod quotas;
+pub mod rate_limit;
 pub mod results;
 pub mod targets;
 
@@ -37,6 +40,12 @@ const MAX_SESSION_TTL_SECONDS: i64 = 7 * 24 * 60 * 60;
 const LOGIN_WINDOW_SECONDS: i64 = 15 * 60;
 const LOGIN_ACCOUNT_ATTEMPT_LIMIT: i32 = 5;
 const LOGIN_IP_ATTEMPT_LIMIT: i32 = 50;
+const DEFAULT_API_REQUESTS_PER_MINUTE: i64 = 240;
+const MIN_API_REQUESTS_PER_MINUTE: i64 = 10;
+const MAX_API_REQUESTS_PER_MINUTE: i64 = 100_000;
+const DEFAULT_EXPENSIVE_REQUESTS_PER_MINUTE: i64 = 20;
+const MIN_EXPENSIVE_REQUESTS_PER_MINUTE: i64 = 1;
+const MAX_EXPENSIVE_REQUESTS_PER_MINUTE: i64 = 10_000;
 const DEFAULT_ALLOWED_ORIGINS: &str = "http://127.0.0.1:5173,http://localhost:5173";
 const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -59,6 +68,8 @@ pub struct AuthConfig {
     pub login_window_seconds: i64,
     pub login_attempt_limit: i32,
     pub login_ip_attempt_limit: i32,
+    pub api_requests_per_minute: i64,
+    pub expensive_requests_per_minute: i64,
 }
 
 impl AuthConfig {
@@ -70,6 +81,8 @@ impl AuthConfig {
             login_window_seconds: LOGIN_WINDOW_SECONDS,
             login_attempt_limit: LOGIN_ACCOUNT_ATTEMPT_LIMIT,
             login_ip_attempt_limit: LOGIN_IP_ATTEMPT_LIMIT,
+            api_requests_per_minute: DEFAULT_API_REQUESTS_PER_MINUTE,
+            expensive_requests_per_minute: DEFAULT_EXPENSIVE_REQUESTS_PER_MINUTE,
         }
     }
 }
@@ -130,6 +143,18 @@ impl Config {
             .unwrap_or_else(|_| DEFAULT_ALLOWED_ORIGINS.to_owned());
         let allowed_origins = parse_allowed_origins(&origins_value)?;
         let allow_private_targets = parse_bool("PROBE_FORGE_ALLOW_PRIVATE_TARGETS", false)?;
+        let api_requests_per_minute = parse_i64(
+            "PROBE_FORGE_API_RATE_LIMIT_PER_MINUTE",
+            DEFAULT_API_REQUESTS_PER_MINUTE,
+            MIN_API_REQUESTS_PER_MINUTE,
+            MAX_API_REQUESTS_PER_MINUTE,
+        )?;
+        let expensive_requests_per_minute = parse_i64(
+            "PROBE_FORGE_EXPENSIVE_RATE_LIMIT_PER_MINUTE",
+            DEFAULT_EXPENSIVE_REQUESTS_PER_MINUTE,
+            MIN_EXPENSIVE_REQUESTS_PER_MINUTE,
+            MAX_EXPENSIVE_REQUESTS_PER_MINUTE,
+        )?;
 
         Ok(Self {
             bind_addr,
@@ -141,6 +166,8 @@ impl Config {
                 login_window_seconds: LOGIN_WINDOW_SECONDS,
                 login_attempt_limit: LOGIN_ACCOUNT_ATTEMPT_LIMIT,
                 login_ip_attempt_limit: LOGIN_IP_ATTEMPT_LIMIT,
+                api_requests_per_minute,
+                expensive_requests_per_minute,
             },
             target_policy: TargetPolicy {
                 allow_private_networks: allow_private_targets,
@@ -207,12 +234,18 @@ pub fn router(state: AppState) -> Router {
         .merge(plans::routes())
         .merge(targets::routes())
         .merge(results::routes())
+        .merge(quotas::routes())
         // Authentication runs before CSRF so an anonymous unsafe request gets a
         // consistent 401 rather than a CSRF 403. Authenticated unsafe requests
-        // still pass through the CSRF guard.
+        // still pass through the CSRF guard. Rate limiting runs after auth (so
+        // it can key on the resolved user) and before CSRF.
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::csrf_guard,
+        ))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            http_middleware::rate_limit,
         ))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
@@ -240,6 +273,9 @@ pub fn router(state: AppState) -> Router {
         .layer(middleware::from_fn(request_timeout))
         .layer(RequestBodyLimitLayer::new(MAX_REQUEST_BODY_BYTES))
         .layer(TraceLayer::new_for_http())
+        // Outermost so a correlation ID is echoed even when an inner layer
+        // (body limit, timeout) short-circuits the request.
+        .layer(middleware::from_fn(http_middleware::request_id))
 }
 
 /// Apply the normal request budget, but leave SSE streams open. A fixed

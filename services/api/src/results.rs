@@ -20,6 +20,8 @@ use sha2::{Digest, Sha256};
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
+use probe_forge_observability::redact_json;
+
 use crate::{
     AppState, audit,
     auth::AuthContext,
@@ -1597,103 +1599,6 @@ fn require_report_writer(role: ProjectRole) -> Result<(), ApiError> {
 }
 
 // ---------------------------------------------------------------------------
-// Redaction
-// ---------------------------------------------------------------------------
-
-const SENSITIVE_KEYS: &[&str] = &[
-    "authorization",
-    "cookie",
-    "set-cookie",
-    "proxy-authorization",
-    "password",
-    "passwd",
-    "secret",
-    "client_secret",
-    "api_key",
-    "apikey",
-    "access_token",
-    "refresh_token",
-    "private_key",
-    "token",
-];
-
-const REDACTED: &str = "[redacted]";
-
-fn redact_json(value: Value) -> Value {
-    match value {
-        Value::Object(map) => {
-            let mut redacted = serde_json::Map::with_capacity(map.len());
-            for (key, item) in map {
-                let normalized = key.to_ascii_lowercase();
-                if SENSITIVE_KEYS.contains(&normalized.as_str()) {
-                    redacted.insert(key, Value::String(REDACTED.to_owned()));
-                } else {
-                    redacted.insert(key, redact_json(item));
-                }
-            }
-            Value::Object(redacted)
-        }
-        Value::Array(items) => Value::Array(items.into_iter().map(redact_json).collect()),
-        Value::String(text) => Value::String(redact_text(&text)),
-        other => other,
-    }
-}
-
-fn redact_text(input: &str) -> String {
-    let mut output = input.to_owned();
-    output = redact_marker(&output, "bearer ");
-    output = redact_marker(&output, "basic ");
-    output = redact_marker(&output, "authorization: ");
-    output = redact_marker(&output, "cookie: ");
-    redact_jwts(&output)
-}
-
-fn redact_marker(input: &str, marker: &str) -> String {
-    let lower = input.to_ascii_lowercase();
-    let mut output = String::with_capacity(input.len());
-    let mut cursor = 0;
-    while let Some(relative) = lower[cursor..].find(marker) {
-        let start = cursor + relative;
-        let after = start + marker.len();
-        output.push_str(&input[cursor..after]);
-        let token_start = after
-            + input[after..]
-                .len()
-                .saturating_sub(input[after..].trim_start().len());
-        let mut token_end = token_start;
-        for character in input[token_start..].chars() {
-            if character.is_whitespace() || character == '"' || character == ',' {
-                break;
-            }
-            token_end += character.len_utf8();
-        }
-        if token_end > token_start {
-            output.push_str(REDACTED);
-        }
-        cursor = token_end;
-    }
-    output.push_str(&input[cursor..]);
-    output
-}
-
-fn redact_jwts(input: &str) -> String {
-    let mut output = String::with_capacity(input.len());
-    for token in
-        input.split_inclusive(|character: char| character.is_whitespace() || character == '"')
-    {
-        let trimmed =
-            token.trim_end_matches(|character: char| character.is_whitespace() || character == '"');
-        if trimmed.starts_with("eyJ") && trimmed.matches('.').count() == 2 {
-            output.push_str(REDACTED);
-            output.push_str(&token[trimmed.len()..]);
-        } else {
-            output.push_str(token);
-        }
-    }
-    output
-}
-
-// ---------------------------------------------------------------------------
 // Markdown export
 // ---------------------------------------------------------------------------
 
@@ -1766,6 +1671,7 @@ fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use probe_forge_observability::REDACTED;
 
     fn run_row(run_type: &str) -> RunRow {
         RunRow {

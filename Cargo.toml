@@ -3,6 +3,7 @@ members = [
     "crates/contracts",
     "crates/execution-adapters",
     "crates/load-runner",
+    "crates/observability",
     "crates/queue",
     "crates/target-policy",
     "services/api",
@@ -30,6 +31,7 @@ getrandom = "0.3.4"
 probeforge-contracts = { path = "crates/contracts" }
 probe-forge-execution-adapters = { path = "crates/execution-adapters" }
 probe-forge-load-runner = { path = "crates/load-runner" }
+probe-forge-observability = { path = "crates/observability" }
 probe-forge-queue = { path = "crates/queue" }
 probe-forge-target-policy = { path = "crates/target-policy" }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }

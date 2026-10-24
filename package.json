@@ -32,6 +32,9 @@
     "db:test": "bun scripts/db-check.mjs",
     "check:db": "bun scripts/db-check.mjs",
     "db:reset": "docker compose -f infra/local/compose.yaml down -v && docker compose -f infra/local/compose.yaml up -d --wait",
+    "db:backup": "bun scripts/db-backup.mjs backup",
+    "db:restore": "bun scripts/db-backup.mjs restore",
+    "db:backup:check": "bun scripts/db-backup.mjs check",
     "user:create": "cargo run -p probe-forge-api --bin create-user --"
   },
   "devDependencies": {

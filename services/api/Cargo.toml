@@ -18,6 +18,7 @@ futures-core.workspace = true
 getrandom.workspace = true
 probeforge-contracts.workspace = true
 probe-forge-execution-adapters.workspace = true
+probe-forge-observability.workspace = true
 probe-forge-queue.workspace = true
 probe-forge-target-policy.workspace = true
 rpassword.workspace = true
@@ -36,4 +37,5 @@ uuid.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+probe-forge-queue.workspace = true
 tower = { version = "0.5.3", features = ["util"] }

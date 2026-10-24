@@ -332,6 +332,46 @@ Format per decision: status, context, decision, rationale, alternatives, impact.
 - **Alternatives:** Store generated summaries on `test_results` (rejected: couples model output to raw evidence and risks overwriting observations); allow untraceable recommendations (rejected: the core gate forbids it); generate reports synchronously in the request without versioning (rejected: loses history and rerun comparison); ship a web view without the API and tests (rejected: no server authority). A typed web view was then added on top of the tested API.
 - **Impact:** Phase 14 can build retention and structured logging on these tables; Phase 15 owns the end-to-end load/result flow. Reports are read-only snapshots; regenerating always creates a new version. The web app renders the run summary, per-test results, evidence, recommendations, report claims, and comparison from a project's **Runs** list. The execution worker still does not produce results automatically. See `docs/RESULTS_REPORTS.md`.
 
+### D-035 - Shared observability crate owns structured logs, correlation IDs, and redaction
+
+- **Date:** 2026-10-24
+- **Status:** Accepted (Phase 14 scope)
+- **Context:** Phase 14 requires structured logs with correlation IDs and redaction across the API, scheduler, and workers, and must never emit secrets in logs. Redaction already existed privately inside `services/api/src/results.rs`; duplicating a second implementation for logs would let the two drift.
+- **Decision:** Add `crates/observability` with one `init_tracing(service)` entry point (text by default, `PROBE_FORGE_LOG_FORMAT=json` for line-delimited JSON), a validated `RequestId` type, the redaction functions, and a `Redacted` display wrapper. Move the single redaction implementation out of `results.rs` and import it. Add an HTTP `request_id` middleware that honors a bounded printable `X-Request-Id` or generates one, inserts it into request extensions, carries it on a `http_request` tracing span, and echoes the response header.
+- **Rationale:** One implementation cannot drift; the middleware makes every API log line correlatable and the response header lets an operator tie a client-visible failure to server logs without exposing internals.
+- **Alternatives:** Keep redaction in the API and copy it into workers (rejected: drift and duplicated tests); log an unbounded client-supplied request ID (rejected: log-injection risk); add a metrics/observability crate that owns HTTP concerns for the workers too (rejected: the workers do not serve authenticated HTTP).
+- **Impact:** The API, scheduler, and execution worker all initialize tracing through the crate. Phase 15 can add job/run provider spans on the same correlation basis.
+
+### D-036 - Quotas and rate limits are enforced server-side with database-backed state
+
+- **Date:** 2026-10-24
+- **Status:** Accepted (Phase 14 scope)
+- **Context:** Phase 14 requires per-project quotas, concurrency limits, request budgets, fair scheduling, and rate limits for the API and expensive operations, all enforced server-side rather than in the UI.
+- **Decision:** Add migration `0014` with `project_quotas` (per-project `max_active_runs`, optional `max_requests_per_window`, `window_seconds`) and `api_rate_limits` (SHA-256-digested key, fixed window). Extend `claim_due_run_fair` to read the per-project active-run cap via `COALESCE(project_quotas, default)` and to refuse a claim whose project has exhausted its request budget for the window (recorded `run_metrics` plus the candidate profile's reserved maximum). Expose `GET|PUT /api/projects/{id}/quota` (owners/admins may write; any member may read) with an audit record. Add an authenticated per-user API rate-limit middleware and a stricter "expensive" bucket for job creation and report generation. `AuthConfig` carries both limits and `Config::from_env` reads them.
+- **Rationale:** Quotas and budgets must not depend on client cooperation, and the advisory-locked claim already serializes concurrent workers, so the same transaction can safely evaluate the budget. Digesting rate-limit keys avoids storing identities in the clear.
+- **Alternatives:** In-memory-only rate limits (rejected: not durable or multi-instance safe); enforce quotas only in the execution worker (rejected: the claim path is the authoritative gate); allow any member to change quotas (rejected: quotas bound server resources).
+- **Impact:** A missing `project_quotas` row keeps the previous default behavior, so existing projects are unaffected. Phase 15 wires the worker dispatch loop to the same claim function.
+
+### D-037 - Retention is a single sanctioned, opt-in purge path
+
+- **Date:** 2026-10-24
+- **Status:** Accepted (Phase 14 scope)
+- **Context:** Phase 14 requires retention for repositories, evidence, reports, and events. Evidence, report versions, job events, approvals, and audit rows are protected by the `reject_immutable_row` trigger; deleting them would appear to weaken a security control.
+- **Decision:** Replace `reject_immutable_row` so it still rejects every UPDATE and every DELETE, except a DELETE inside a transaction that opts in with `SET LOCAL probeforge.retention_purge = 'on'`. The only code that sets that flag is `probe_forge_queue::run_retention`, which runs from the scheduler in bounded batches and logs counts. It purges evidence past `retention_until` that is not referenced by a recommendation, reports older than the report window (cascading their versions), old job events for terminal jobs, expired sessions, and stale rate-limit/login counters. Repository working directories remain cleaned by the ingestion worker (Phase 5); the DB retention concerns stored artifacts.
+- **Rationale:** A transaction-local opt-in keeps the default tamper-resistance unchanged and makes the exception explicit, auditable, and testable. Excluding recommendation-referenced evidence avoids violating the Phase 13 traceability constraint.
+- **Alternatives:** Drop the immutability triggers (rejected: weakens a control globally); never delete immutable rows (rejected: fails the retention requirement); mark rows deleted in a new column (rejected: more complex and leaves data resident).
+- **Impact:** A regression test asserts ordinary deletes still fail. Retention intervals are configuration (`PROBE_FORGE_RETENTION_*`). Policy may be tuned without a migration.
+
+### D-038 - Backup/restore is scripted with a primary-database guard and a tested roundtrip
+
+- **Date:** 2026-10-24
+- **Status:** Accepted (Phase 14 scope)
+- **Context:** Phase 14 requires a documented and tested PostgreSQL backup and restore procedure.
+- **Decision:** Add `scripts/db-backup.mjs` with `backup`, `restore`, and `check` modes that use `pg_dump`/`psql` inside the local Compose container. `restore` refuses to target the database named by `DATABASE_URL` unless `--force` is passed. `check` performs a real dump and restore into a throwaway scratch database, verifies the migration count matches, and drops the scratch database, never modifying the source.
+- **Rationale:** A real roundtrip is stronger evidence than a documented procedure alone, and the scratch-database approach is safe for a developer machine.
+- **Alternatives:** Document only without a test (rejected: gate requires tested); restore in place (rejected: destructive); require a host `pg_dump` (rejected: it may be absent, while the container always has it).
+- **Impact:** `bun run db:backup`, `db:restore`, and `db:backup:check` are available; `backups/` is gitignored. See `docs/OPERATIONS.md`.
+
 ## Open questions
 
 | ID | Question | Needed by | Notes |

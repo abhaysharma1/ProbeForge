@@ -25,6 +25,9 @@ target/
 workspaces/
 tmp/
 
+# Local database backups (never commit scan evidence or credentials)
+backups/
+
 # Local databases
 *.sqlite
 *.sqlite3

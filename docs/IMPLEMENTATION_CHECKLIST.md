@@ -390,26 +390,37 @@ Legend: `[x]` done with evidence - `[ ]` not done.
 
 ## Phase 14 — Observability, quotas, and operational hardening
 
-**Status:** Not started
+**Status:** Complete - [report](phases/14_observability_operations_report.md).
 
 **Tasks**
 
-- [ ] Add structured logs with correlation IDs and redaction
-- [ ] Add worker health, queue depth, lease-expiry, failure-rate, and execution-duration metrics
-- [ ] Add per-project quotas, concurrency limits, request budgets, and fair scheduling
-- [ ] Add retention policies for repositories, evidence, reports, and events
-- [ ] Add dependency/version inventory and security update guidance
-- [ ] Add backups and a restore procedure for PostgreSQL
-- [ ] Add rate limits for API and expensive AI operations
-- [ ] Add graceful shutdown and cancellation behavior across services
-- [ ] Add operational runbooks and incident handling
+- [x] Add structured logs with correlation IDs and redaction - `crates/observability`; the API middleware attaches and echoes a correlation ID and seeds a `http_request` span.
+- [x] Add worker health, queue depth, lease-expiry, failure-rate, and execution-duration metrics - `probe_forge_queue::queue_metrics` and `GET /metricsz` on the scheduler.
+- [x] Add per-project quotas, concurrency limits, request budgets, and fair scheduling - `project_quotas`, `claim_due_run_fair` enforcement, `GET|PUT /api/projects/{id}/quota`.
+- [x] Add retention policies for repositories, evidence, reports, and events - `run_retention` via the single sanctioned purge path; repository workspaces are cleaned by ingestion.
+- [x] Add dependency/version inventory and security update guidance - `docs/OPERATIONS.md`.
+- [x] Add backups and a restore procedure for PostgreSQL - `scripts/db-backup.mjs` with a tested scratch-database roundtrip.
+- [x] Add rate limits for API and expensive AI operations - authenticated per-user middleware with a stricter expensive bucket.
+- [x] Add graceful shutdown and cancellation behavior across services - existing graceful shutdown plus scheduled-retention abort and documented cancellation.
+- [x] Add operational runbooks and incident handling - `docs/OPERATIONS.md`.
 
 **Exit gate**
 
-- [ ] Operators can diagnose stuck jobs and failed workers
-- [ ] Quotas are enforced server-side
-- [ ] Restore and retention procedures are documented and tested
-- [ ] No secrets are emitted in logs
+- [x] Operators can diagnose stuck jobs and failed workers - `/metricsz`, lease queries, and the incident runbook.
+- [x] Quotas are enforced server-side - claim-path enforcement with integration tests.
+- [x] Restore and retention procedures are documented and tested - `db:backup:check` roundtrip and the retention purge immutability-regression test.
+- [x] No secrets are emitted in logs - single redaction implementation with tests.
+
+**Evidence**
+
+- Shared crate: `crates/observability/`
+- Queue quotas, metrics, retention: `crates/queue/src/lib.rs`
+- API middleware/rate limit/quotas: `services/api/src/http_middleware.rs`, `rate_limit.rs`, `quotas.rs`
+- Scheduler metrics and retention loop: `services/scheduler/src/lib.rs`
+- Migration: `migrations/0014_observability.sql`
+- Tests: `services/api/tests/operations.rs`
+- Tooling and runbook: `scripts/db-backup.mjs`, `docs/OPERATIONS.md`
+- Report: `docs/phases/14_observability_operations_report.md`
 
 ## Phase 15 — End-to-end acceptance using local fixtures
 

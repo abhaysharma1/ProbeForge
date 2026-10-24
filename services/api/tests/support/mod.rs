@@ -49,7 +49,16 @@ impl TestApp {
         Self::setup_with_target_policy(TargetPolicy::local_test()).await
     }
 
+    /// Test harness with a custom auth/rate-limit configuration.
+    pub async fn setup_with_auth(auth: AuthConfig) -> Option<Self> {
+        Self::setup_inner(TargetPolicy::default(), auth).await
+    }
+
     async fn setup_with_target_policy(target_policy: TargetPolicy) -> Option<Self> {
+        Self::setup_inner(target_policy, AuthConfig::local_test()).await
+    }
+
+    async fn setup_inner(target_policy: TargetPolicy, auth: AuthConfig) -> Option<Self> {
         let database_url = match std::env::var("DATABASE_URL") {
             Ok(value) if !value.trim().is_empty() => value,
             _ => {
@@ -100,8 +109,7 @@ impl TestApp {
             .expect("migrations directory could not be loaded");
         migrator.run(&pool).await.expect("migrations failed");
 
-        let state =
-            AppState::new_with_target_policy(pool.clone(), AuthConfig::local_test(), target_policy);
+        let state = AppState::new_with_target_policy(pool.clone(), auth, target_policy);
         let router = router(state);
 
         Some(Self {

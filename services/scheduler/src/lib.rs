@@ -1,6 +1,7 @@
 use std::{fmt, net::SocketAddr, time::Duration};
 
 use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
+use probe_forge_queue::{RetentionOutcome, RetentionPolicy};
 use serde::Serialize;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use thiserror::Error;
@@ -13,6 +14,9 @@ const DEFAULT_BIND_ADDR: &str = "127.0.0.1:8081";
 const DEFAULT_POLL_INTERVAL_SECONDS: u64 = 5;
 const MIN_POLL_INTERVAL_SECONDS: u64 = 1;
 const MAX_POLL_INTERVAL_SECONDS: u64 = 300;
+const DEFAULT_RETENTION_INTERVAL_SECONDS: u64 = 3_600;
+const MIN_RETENTION_INTERVAL_SECONDS: u64 = 60;
+const MAX_RETENTION_INTERVAL_SECONDS: u64 = 86_400;
 const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const DB_MAX_CONNECTIONS: u32 = 5;
@@ -23,6 +27,8 @@ pub struct Config {
     pub bind_addr: SocketAddr,
     pub database_url: String,
     pub poll_interval_seconds: u64,
+    pub retention_interval_seconds: u64,
+    pub retention: RetentionPolicy,
 }
 
 impl fmt::Debug for Config {
@@ -32,6 +38,10 @@ impl fmt::Debug for Config {
             .field("bind_addr", &self.bind_addr)
             .field("database_url", &"<redacted>")
             .field("poll_interval_seconds", &self.poll_interval_seconds)
+            .field(
+                "retention_interval_seconds",
+                &self.retention_interval_seconds,
+            )
             .finish()
     }
 }
@@ -61,10 +71,28 @@ impl Config {
             return Err(ConfigError::InvalidDatabaseUrl);
         }
         let poll_interval_seconds = parse_interval()?;
+        let retention_interval_seconds = parse_u64_env(
+            "PROBE_FORGE_RETENTION_INTERVAL_SECONDS",
+            DEFAULT_RETENTION_INTERVAL_SECONDS,
+            MIN_RETENTION_INTERVAL_SECONDS,
+            MAX_RETENTION_INTERVAL_SECONDS,
+        )?;
+        let event_retention_days = parse_i32_env("PROBE_FORGE_RETENTION_EVENT_DAYS", 30, 1, 3_650)?;
+        let report_retention_days =
+            parse_i32_env("PROBE_FORGE_RETENTION_REPORT_DAYS", 180, 1, 3_650)?;
+        let counter_retention_days =
+            parse_i32_env("PROBE_FORGE_RETENTION_COUNTER_DAYS", 7, 1, 3_650)?;
         Ok(Self {
             bind_addr,
             database_url,
             poll_interval_seconds,
+            retention_interval_seconds,
+            retention: RetentionPolicy {
+                event_retention_days,
+                report_retention_days,
+                counter_retention_days,
+                ..RetentionPolicy::default()
+            },
         })
     }
 
@@ -74,6 +102,8 @@ impl Config {
             bind_addr,
             database_url: database_url.into(),
             poll_interval_seconds: DEFAULT_POLL_INTERVAL_SECONDS,
+            retention_interval_seconds: DEFAULT_RETENTION_INTERVAL_SECONDS,
+            retention: RetentionPolicy::default(),
         }
     }
 }
@@ -116,6 +146,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readiness))
+        .route("/metricsz", get(metricsz))
         .with_state(state)
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
@@ -123,6 +154,45 @@ pub fn router(state: AppState) -> Router {
         ))
         .layer(RequestBodyLimitLayer::new(MAX_REQUEST_BODY_BYTES))
         .layer(TraceLayer::new_for_http())
+}
+
+#[derive(Serialize)]
+struct MetricsResponse {
+    service: &'static str,
+    metrics: probe_forge_queue::QueueMetrics,
+}
+
+/// Internal operator metrics: queue depth, active work, expired leases, recent
+/// failures, and completed-run duration. Counts are aggregate and expose no
+/// tenant content. It is not part of the public API surface.
+async fn metricsz(
+    State(state): State<AppState>,
+) -> Result<Json<MetricsResponse>, (StatusCode, Json<Readiness>)> {
+    let Some(pool) = &state.pool else {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(Readiness {
+                status: "not_ready",
+                service: SERVICE_NAME,
+            }),
+        ));
+    };
+    match probe_forge_queue::queue_metrics(pool).await {
+        Ok(metrics) => Ok(Json(MetricsResponse {
+            service: SERVICE_NAME,
+            metrics,
+        })),
+        Err(error) => {
+            tracing::warn!(error = %error, "queue metrics query failed");
+            Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(Readiness {
+                    status: "metrics_unavailable",
+                    service: SERVICE_NAME,
+                }),
+            ))
+        }
+    }
 }
 
 async fn healthz() -> Json<Health> {
@@ -181,10 +251,18 @@ pub async fn serve(config: Config) -> Result<(), ServeError> {
         scheduler_loop(loop_pool, interval).await;
     });
 
+    let retention_pool = pool.clone();
+    let retention_interval = Duration::from_secs(config.retention_interval_seconds);
+    let retention_policy = config.retention.clone();
+    let retention = tokio::spawn(async move {
+        retention_loop(retention_pool, retention_interval, retention_policy).await;
+    });
+
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
     info!(
         addr = %config.bind_addr,
         interval_seconds = config.poll_interval_seconds,
+        retention_interval_seconds = config.retention_interval_seconds,
         service = SERVICE_NAME,
         "service listening"
     );
@@ -192,6 +270,7 @@ pub async fn serve(config: Config) -> Result<(), ServeError> {
         .with_graceful_shutdown(shutdown_signal())
         .await;
     scheduler.abort();
+    retention.abort();
     result?;
     Ok(())
 }
@@ -244,6 +323,29 @@ async fn scheduler_loop(pool: PgPool, interval: Duration) {
     }
 }
 
+async fn retention_loop(pool: PgPool, interval: Duration, policy: RetentionPolicy) {
+    let mut ticker = tokio::time::interval(interval);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        ticker.tick().await;
+        match probe_forge_queue::run_retention(&pool, &policy).await {
+            Ok(outcome) if outcome != RetentionOutcome::default() => {
+                tracing::info!(
+                    evidence_deleted = outcome.evidence_deleted,
+                    reports_deleted = outcome.reports_deleted,
+                    job_events_deleted = outcome.job_events_deleted,
+                    sessions_deleted = outcome.sessions_deleted,
+                    rate_limit_entries_deleted = outcome.rate_limit_entries_deleted,
+                    login_attempt_entries_deleted = outcome.login_attempt_entries_deleted,
+                    "retention purge complete"
+                );
+            }
+            Ok(_) => {}
+            Err(error) => tracing::warn!(error = %error, "retention purge failed"),
+        }
+    }
+}
+
 fn parse_bind_addr(name: &'static str, value: &str) -> Result<SocketAddr, ConfigError> {
     value
         .trim()
@@ -255,21 +357,46 @@ fn parse_bind_addr(name: &'static str, value: &str) -> Result<SocketAddr, Config
 }
 
 fn parse_interval() -> Result<u64, ConfigError> {
-    let raw = match std::env::var("PROBE_FORGE_SCHEDULER_POLL_SECONDS") {
+    parse_u64_env(
+        "PROBE_FORGE_SCHEDULER_POLL_SECONDS",
+        DEFAULT_POLL_INTERVAL_SECONDS,
+        MIN_POLL_INTERVAL_SECONDS,
+        MAX_POLL_INTERVAL_SECONDS,
+    )
+}
+
+fn parse_u64_env(name: &'static str, default: u64, min: u64, max: u64) -> Result<u64, ConfigError> {
+    let raw = match std::env::var(name) {
         Ok(value) => value,
-        Err(_) => return Ok(DEFAULT_POLL_INTERVAL_SECONDS),
+        Err(_) => return Ok(default),
     };
     let value = raw
         .trim()
         .parse::<u64>()
         .map_err(|_| ConfigError::InvalidInteger {
-            name: "PROBE_FORGE_SCHEDULER_POLL_SECONDS",
+            name,
             value: raw.clone(),
         })?;
-    if !(MIN_POLL_INTERVAL_SECONDS..=MAX_POLL_INTERVAL_SECONDS).contains(&value) {
-        return Err(ConfigError::IntegerOutOfRange {
-            name: "PROBE_FORGE_SCHEDULER_POLL_SECONDS",
-        });
+    if !(min..=max).contains(&value) {
+        return Err(ConfigError::IntegerOutOfRange { name });
+    }
+    Ok(value)
+}
+
+fn parse_i32_env(name: &'static str, default: i32, min: i32, max: i32) -> Result<i32, ConfigError> {
+    let raw = match std::env::var(name) {
+        Ok(value) => value,
+        Err(_) => return Ok(default),
+    };
+    let value = raw
+        .trim()
+        .parse::<i32>()
+        .map_err(|_| ConfigError::InvalidInteger {
+            name,
+            value: raw.clone(),
+        })?;
+    if !(min..=max).contains(&value) {
+        return Err(ConfigError::IntegerOutOfRange { name });
     }
     Ok(value)
 }
@@ -361,6 +488,18 @@ mod tests {
             .await
             .expect("response");
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn metricsz_fails_closed_without_database() {
+        let response = test_router()
+            .oneshot(request("/metricsz"))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        let body = json_body(response).await;
+        assert_eq!(body["status"], "not_ready");
     }
 
     #[test]

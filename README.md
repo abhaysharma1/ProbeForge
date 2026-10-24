@@ -11,12 +11,12 @@ The AI agent (Pi) inspects a pinned commit of the user's repository and proposes
 
 ## Status
 
-**Phase 13 - Results, AI recommendations, and reports: complete.** See the [phase report](docs/phases/13_results_reports_report.md).
+**Phase 14 - Observability, quotas, and operational hardening: complete.** See the [phase report](docs/phases/14_observability_operations_report.md).
 
-- Next permitted phase: **Phase 14 - Observability, quotas, and operational hardening** (starts only after explicit authorization).
+- Next permitted phase: **Phase 15 - End-to-end acceptance using local fixtures** (starts only after explicit authorization).
 - Phase tasks and exit gates: [docs/IMPLEMENTATION_CHECKLIST.md](docs/IMPLEMENTATION_CHECKLIST.md)
 - Decisions, interpretations, and open questions: [docs/DECISION_LOG.md](docs/DECISION_LOG.md)
-- Contract details: [docs/CONTRACTS.md](docs/CONTRACTS.md) · Database details: [docs/DATABASE.md](docs/DATABASE.md) · Authentication and RBAC: [docs/AUTH.md](docs/AUTH.md) · Jobs and queue: [docs/JOBS.md](docs/JOBS.md) · Read-only ingestion: [docs/REPOSITORY_INGESTION.md](docs/REPOSITORY_INGESTION.md) · Static discovery: [docs/DISCOVERY.md](docs/DISCOVERY.md) · Pi planning: [docs/PLANNING.md](docs/PLANNING.md) · Plan approval: [docs/PLAN_APPROVAL.md](docs/PLAN_APPROVAL.md) · Target validation: [docs/TARGET_VALIDATION.md](docs/TARGET_VALIDATION.md) · Execution adapters: [docs/EXECUTION_ADAPTERS.md](docs/EXECUTION_ADAPTERS.md) · Load scenarios: [docs/LOAD_SCENARIOS.md](docs/LOAD_SCENARIOS.md) · Load execution: [docs/LOAD_EXECUTION.md](docs/LOAD_EXECUTION.md) · Results and reports: [docs/RESULTS_REPORTS.md](docs/RESULTS_REPORTS.md)
+- Contract details: [docs/CONTRACTS.md](docs/CONTRACTS.md) · Database details: [docs/DATABASE.md](docs/DATABASE.md) · Authentication and RBAC: [docs/AUTH.md](docs/AUTH.md) · Jobs and queue: [docs/JOBS.md](docs/JOBS.md) · Read-only ingestion: [docs/REPOSITORY_INGESTION.md](docs/REPOSITORY_INGESTION.md) · Static discovery: [docs/DISCOVERY.md](docs/DISCOVERY.md) · Pi planning: [docs/PLANNING.md](docs/PLANNING.md) · Plan approval: [docs/PLAN_APPROVAL.md](docs/PLAN_APPROVAL.md) · Target validation: [docs/TARGET_VALIDATION.md](docs/TARGET_VALIDATION.md) · Execution adapters: [docs/EXECUTION_ADAPTERS.md](docs/EXECUTION_ADAPTERS.md) · Load scenarios: [docs/LOAD_SCENARIOS.md](docs/LOAD_SCENARIOS.md) · Load execution: [docs/LOAD_EXECUTION.md](docs/LOAD_EXECUTION.md) · Results and reports: [docs/RESULTS_REPORTS.md](docs/RESULTS_REPORTS.md) · Operations: [docs/OPERATIONS.md](docs/OPERATIONS.md)
 - Phase reports: [docs/phases/](docs/phases/)
 
 ## Architecture at a glance
@@ -141,6 +141,7 @@ Stop PostgreSQL with `bun run db:down`.
 - Load scenarios are versioned by their parent plan version. Approval revalidates selected scenarios and pins the exact JSON/profile in the immutable snapshot; there is no independent scenario-edit endpoint.
 - Target-scope validation for load paths is called by the Phase 12 runner before any traffic; extracted values are percent-encoded before substitution.
 - Phase 13 exposes run results, evidence metadata, traceable recommendations, versioned reports, redaction, export, and rerun comparison through the authenticated JSON API (`services/api/src/results.rs`) and the web app (`apps/web/src/RunReport.tsx`, reached from a project's **Runs** list). Generated summaries are separate from raw results, and every report claim cites a stored result/evidence/metric or is labeled a hypothesis. The execution worker does not yet write results automatically.
+- Phase 14 adds a shared observability crate (structured logs, correlation IDs, one redaction implementation), an internal `GET /metricsz` queue/worker metrics endpoint, server-enforced per-project quotas and request budgets (`project_quotas`, `GET|PUT /api/projects/{id}/quota`), per-user API and expensive-operation rate limits, a scheduler retention purge through a single opt-in path, and a tested backup/restore roundtrip. Operators use `docs/OPERATIONS.md`. The execution worker is still health-only, so no live run is dispatched yet.
 - The web app now shows analysis jobs and a focused plan review, but there is still no job creation UI. Jobs are created through the API and plans must come from the worker/seed data until the authenticated job path is completed.
 - Versioned v1 contracts now include `job.claimed` and `job.retry_scheduled` events; catalog entries are populated and validated in TypeScript and Rust.
 - All services bind to loopback by default.

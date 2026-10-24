@@ -36,6 +36,8 @@ const commands = [
       "targets_authorization",
       "--test",
       "results_reports",
+      "--test",
+      "operations",
       "--",
       "--nocapture",
     ],

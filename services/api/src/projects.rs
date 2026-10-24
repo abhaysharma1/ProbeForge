@@ -71,6 +71,12 @@ impl ProjectRole {
         !matches!(self, Self::Viewer)
     }
 
+    /// Per-project quotas bound server resources, so only owners and admins may
+    /// change them.
+    pub(crate) fn can_manage_quota(self) -> bool {
+        matches!(self, Self::Owner | Self::Admin)
+    }
+
     /// Owner may manage admins, collaborators, and viewers. Admin may manage
     /// only collaborators and viewers. The owner role changes only through the
     /// dedicated ownership-transfer operation.
