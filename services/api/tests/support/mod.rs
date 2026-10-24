@@ -188,6 +188,15 @@ impl TestApp {
         send_raw_request(&self.router, method, uri, session, last_event_id).await
     }
 
+    pub async fn send_raw(
+        &self,
+        method: Method,
+        uri: &str,
+        session: Option<&Session>,
+    ) -> TestRawResponse {
+        send_raw_request(&self.router, method, uri, session, None).await
+    }
+
     pub async fn login(&self, email: &str, password: &str) -> Session {
         let response = self.login_attempt(email, password).await;
         assert_eq!(

@@ -34,6 +34,8 @@ const commands = [
       "plans_approval",
       "--test",
       "targets_authorization",
+      "--test",
+      "results_reports",
       "--",
       "--nocapture",
     ],

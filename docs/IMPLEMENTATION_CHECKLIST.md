@@ -360,25 +360,32 @@ Legend: `[x]` done with evidence - `[ ]` not done.
 
 ## Phase 13 — Results, AI recommendations, and reports
 
-**Status:** Not started
+**Status:** Complete (server-side) - [report](phases/13_results_reports_report.md). A dedicated web view for the result pages and run summary is deferred until it can meet the frontend design gate; the authenticated JSON API exposes the full run summary, per-test results, evidence metadata, recommendations, metrics, and report.
 
 **Tasks**
 
-- [ ] Build per-test result pages and a run summary
-- [ ] Preserve raw structured observations and sanitized evidence independently of AI summaries
-- [ ] Generate recommendations referencing result/evidence IDs
-- [ ] Distinguish confirmed findings, suspected findings, passed checks, skipped checks, inconclusive results, and execution errors
-- [ ] For load testing, distinguish observed metrics from hypotheses about root causes
-- [ ] Add report versioning and rerun comparisons
-- [ ] Redact credentials, tokens, cookies, and sensitive response data
-- [ ] Add export to JSON and a readable report format
+- [x] Build per-test result pages and a run summary - authenticated `GET /api/projects/{id}/runs` and `GET /api/runs/{id}` return the run summary, per-test results, evidence metadata, recommendations, metrics, and report. No web view yet (documented limitation).
+- [x] Preserve raw structured observations and sanitized evidence independently of AI summaries - `test_results.observation` and the immutable `evidence` table are read directly; generated summaries live only in `report_versions`/`recommendations`.
+- [x] Generate recommendations referencing result/evidence IDs - deterministic `recommendations` rows cite `result_id`/`evidence_id`/`run_metric_id`, enforced by the `recommendations_traceability` constraint.
+- [x] Distinguish confirmed findings, suspected findings, passed checks, skipped checks, inconclusive results, and execution errors - `test_results.finding_status` plus the closed outcome vocabulary; reports split `findings` from `checks`.
+- [x] For load testing, distinguish observed metrics from hypotheses about root causes - load observations cite metric bucket IDs; root-cause claims are stored as `kind = 'hypothesis'` with no reference.
+- [x] Add report versioning and rerun comparisons - immutable `report_versions` per `reports` row; `GET /api/runs/{id}/compare?otherRunId=`.
+- [x] Redact credentials, tokens, cookies, and sensitive response data - recursive key/value redaction applied to all report content and run-detail observations.
+- [x] Add export to JSON and a readable report format - `GET /api/runs/{id}/report/export?format=json|markdown`.
 
 **Exit gate**
 
-- [ ] Every AI claim can be traced to stored evidence or is explicitly labeled as a hypothesis
-- [ ] Report generation failure does not destroy test results
-- [ ] Secrets do not appear in reports or logs
-- [ ] Run comparison shows profile, target, scenario version, and timestamps
+- [x] Every AI claim can be traced to stored evidence or is explicitly labeled as a hypothesis - report claims carry `references` or `claimKind = "hypothesis"`; DB constraint rejects untraceable non-hypothesis recommendations.
+- [x] Report generation failure does not destroy test results - reports are a separate table; oversize generation marks the report `failed` and leaves results intact (integration test).
+- [x] Secrets do not appear in reports or logs - report content and run-detail observations are redacted; no content is logged.
+- [x] Run comparison shows profile, target, scenario version, and timestamps - comparison sides include target origin, scenario ID/name, plan version, profile, and all timestamps.
+
+**Evidence**
+
+- Results/reports API: `services/api/src/results.rs`
+- Migration: `migrations/0013_results_reports.sql`
+- Integration tests: `services/api/tests/results_reports.rs`
+- Report: `docs/phases/13_results_reports_report.md`
 
 ## Phase 14 — Observability, quotas, and operational hardening
 
