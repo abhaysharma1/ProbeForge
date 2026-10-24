@@ -27,6 +27,9 @@ export interface WorkerConfig {
   readonly port: number;
   readonly ingestion: IngestionConfig;
   readonly planning: PlanningConfig;
+  /** Background job loop: claim queued jobs and produce a draft plan. */
+  readonly jobLoop: boolean;
+  readonly jobLoopIntervalMs: number;
 }
 
 export class WorkerConfigError extends Error {
@@ -336,5 +339,13 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): W
         auditLogPathRaw === undefined || auditLogPathRaw.length === 0 ? null : auditLogPathRaw,
     },
     planning: readPlanningConfig(env),
+    jobLoop: readBoolean(env, "PROBE_FORGE_ANALYSIS_JOB_LOOP", false),
+    jobLoopIntervalMs: readInteger(
+      env,
+      "PROBE_FORGE_ANALYSIS_JOB_LOOP_INTERVAL_MS",
+      5_000,
+      1_000,
+      300_000,
+    ),
   };
 }

@@ -17,6 +17,8 @@ const DEFAULT_CONFIG = {
     model: null,
     limits: DEFAULT_PLANNING_LIMITS,
   },
+  jobLoop: false,
+  jobLoopIntervalMs: 5_000,
 };
 
 describe("loadConfig", () => {

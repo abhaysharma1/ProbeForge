@@ -402,6 +402,16 @@ Format per decision: status, context, decision, rationale, alternatives, impact.
 - **Alternatives:** Add a background loop to the worker HTTP service (rejected: implicit work); require a configured model (rejected: fallback exists and is sufficient for acceptance); generate the plan inside the API (rejected: planning is the worker's job).
 - **Impact:** The full chain (job → plan → approval → runs → dispatch → report) is exercised by the Phase 15 acceptance tests. Continuous operation needs an external supervisor.
 
+### D-042 - Analysis and execution loops are opt-in env flags
+
+- **Date:** 2026-10-24
+- **Status:** Accepted
+- **Context:** D-040 and D-041 made analysis and execution operator CLIs. That left the product headless: a repository connected from the browser produced a job that never became a plan, and a queued run never executed, so the UI looked broken.
+- **Decision:** Keep the operator binaries but add opt-in background loops: `PROBE_FORGE_ANALYSIS_JOB_LOOP` runs `processJobOnce` on an interval inside the analysis worker, and `PROBE_FORGE_EXECUTION_DISPATCH_LOOP` runs `dispatch_once` on an interval inside the execution worker. Both default to off in `.env.example` and are enabled in the local `.env`. `processJobOnce` now requeues or fails a job when ingestion or planning throws, instead of leaving it leased.
+- **Rationale:** A self-driving local app is what makes the workflow usable, while an explicit flag keeps tests and CI deterministic and preserves "no work without a deliberate action" for production.
+- **Alternatives:** Make the loops always-on (rejected: implicit execution in tests/CI); keep CLIs only (rejected: headless product); add HTTP trigger endpoints (rejected: long-running requests and a new authenticated surface).
+- **Impact:** `bun run dev` yields a working connect → analyze → approve → target → run → report flow. Continuous non-local operation still wants an external supervisor. See `docs/OPERATIONS.md`.
+
 ## Open questions
 
 | ID | Question | Needed by | Notes |

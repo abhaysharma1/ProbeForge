@@ -2,7 +2,7 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Intensity, JobGoal } from "@probe-forge/contracts";
 import { testCatalog } from "@probe-forge/test-catalog";
-import { generatePlan } from "./agent/generate";
+import { generatePlan, type PlanGenerationResult } from "./agent/generate";
 import { DEFAULT_PLANNING_LIMITS, type PlanningLimits } from "./agent/limits";
 import { createPostgresPlanStore } from "./agent/postgres-store";
 import { discoverApplication } from "./discovery";
@@ -60,6 +60,17 @@ function filePathFromUrl(url: string): string | null {
   }
 }
 
+/** A bounded, safe error code for the job row; never the raw error text. */
+function jobErrorCode(error: unknown): string {
+  if (error !== null && typeof error === "object" && "code" in error) {
+    const code = (error as { readonly code?: unknown }).code;
+    if (typeof code === "string" && /^[a-z0-9_]{1,120}$/.test(code)) {
+      return code;
+    }
+  }
+  return "planning_failed";
+}
+
 /**
  * Claim and process at most one queued job. Returns `null` when the queue is
  * empty. The claim commits before ingestion or planning begins.
@@ -104,40 +115,59 @@ export async function processJobOnce(
       localFixtureRoot,
     });
 
-    const result = await withRepositorySnapshot(
-      {
-        target,
-        reference: job.source_reference,
-        credentialRef: null,
-        secretResolver: new EnvSecretResolver(process.env),
-        audit: options.audit,
-        limits: options.ingestionLimits,
-        localFixtureRoot,
-        allowLocalFixtures: options.allowLocalFixtures,
-      },
-      async (session) => {
-        const inventory = await discoverApplication(session);
-        return await generatePlan(
-          {
-            job: {
-              id: job.id,
-              projectId: job.project_id,
-              goal: job.goal as JobGoal,
-              intensity: job.intensity as Intensity,
-              displayName: job.display_name,
+    let result: PlanGenerationResult;
+    try {
+      result = await withRepositorySnapshot(
+        {
+          target,
+          reference: job.source_reference,
+          credentialRef: null,
+          secretResolver: new EnvSecretResolver(process.env),
+          audit: options.audit,
+          limits: options.ingestionLimits,
+          localFixtureRoot,
+          allowLocalFixtures: options.allowLocalFixtures,
+        },
+        async (session) => {
+          const inventory = await discoverApplication(session);
+          return await generatePlan(
+            {
+              job: {
+                id: job.id,
+                projectId: job.project_id,
+                goal: job.goal as JobGoal,
+                intensity: job.intensity as Intensity,
+                displayName: job.display_name,
+              },
+              repository: session,
+              inventory,
+              catalog: testCatalog,
             },
-            repository: session,
-            inventory,
-            catalog: testCatalog,
-          },
-          {
-            runtime: null,
-            store,
-            limits: options.planningLimits ?? DEFAULT_PLANNING_LIMITS,
-          },
-        );
-      },
-    );
+            {
+              runtime: null,
+              store,
+              limits: options.planningLimits ?? DEFAULT_PLANNING_LIMITS,
+            },
+          );
+        },
+      );
+    } catch (error) {
+      const rows = await sql<{ status: string }[]>`
+        UPDATE jobs
+        SET status = CASE WHEN attempt < max_attempts THEN 'queued' ELSE 'failed' END,
+            worker_id = NULL,
+            lease_expires_at = NULL,
+            heartbeat_at = NULL,
+            not_before = now() + make_interval(secs => ${RETRY_BACKOFF_SECONDS}),
+            last_error_code = ${jobErrorCode(error)}
+        WHERE id = ${job.id} AND worker_id = ${options.workerId}
+        RETURNING status
+      `;
+      return {
+        jobId: job.id,
+        outcome: rows[0]?.status === "queued" ? "retry_scheduled" : "failed",
+      };
+    }
 
     if (result.outcome === "planned" || result.outcome === "fallback") {
       const planId = result.savedPlan?.id ?? null;

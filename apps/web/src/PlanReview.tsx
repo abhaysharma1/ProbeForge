@@ -3,11 +3,15 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ApiError,
   approvePlan,
+  createRuns,
   getJobPlan,
   type Job,
   type JobPlan,
+  listAuthorizations,
+  listTargets,
   type PlanLoadScenario,
   type PlannedTest,
+  type TargetAuthorization,
   updatePlanSelection,
 } from "./api";
 
@@ -417,6 +421,11 @@ export function PlanReview({ job, canEdit, csrfToken, onBack, onSessionExpired }
   const [conflict, setConflict] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [authorizations, setAuthorizations] = useState<TargetAuthorization[]>([]);
+  const [authorizationId, setAuthorizationId] = useState("");
+  const [queuing, setQueuing] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
+  const [runNotice, setRunNotice] = useState<string | null>(null);
 
   const handleError = useCallback(
     (error: unknown): string | null => {
@@ -467,6 +476,34 @@ export function PlanReview({ job, canEdit, csrfToken, onBack, onSessionExpired }
     plan !== null &&
     (plan.status === "proposed" || plan.status === "draft") &&
     plan.approval === null;
+
+  const approvedPlanId = plan?.approval !== null && plan !== null ? plan.id : null;
+  const approvedProjectId = plan !== null && plan.approval !== null ? plan.projectId : null;
+
+  useEffect(() => {
+    if (approvedPlanId === null || approvedProjectId === null) {
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const targets = await listTargets(approvedProjectId);
+        const lists = await Promise.all(targets.map((target) => listAuthorizations(target.id)));
+        const active = lists.flat().filter((authorization) => authorization.active);
+        if (!cancelled) {
+          setAuthorizations(active);
+          setAuthorizationId(active[0]?.id ?? "");
+        }
+      } catch (error) {
+        if (!cancelled && error instanceof ApiError && error.status === 401) {
+          onSessionExpired();
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [approvedPlanId, approvedProjectId, onSessionExpired]);
   const savedTestIds = useMemo(
     () => plan?.plannedTests.filter((test) => test.selected).map((test) => test.id) ?? [],
     [plan],
@@ -557,6 +594,26 @@ export function PlanReview({ job, canEdit, csrfToken, onBack, onSessionExpired }
       }
     } finally {
       setApproving(false);
+    }
+  }
+
+  async function handleQueueRuns() {
+    if (!plan || authorizationId === "") return;
+    setQueuing(true);
+    setRunError(null);
+    setRunNotice(null);
+    try {
+      const runs = await createRuns(plan.id, authorizationId, csrfToken);
+      setRunNotice(
+        `Queued ${runs.length} ${runs.length === 1 ? "run" : "runs"}. Open them from the project's Runs list.`,
+      );
+    } catch (error) {
+      const text = handleError(error);
+      if (text) {
+        setRunError(text);
+      }
+    } finally {
+      setQueuing(false);
     }
   }
 
@@ -904,6 +961,63 @@ export function PlanReview({ job, canEdit, csrfToken, onBack, onSessionExpired }
                   The approval snapshot is immutable and preserves the exact selected tests,
                   scenarios, risks, and catalog version.
                 </p>
+              </section>
+            ) : null}
+
+            {plan.approval ? (
+              <section className="rounded-lg border border-pf-border bg-pf-surface px-4 py-4">
+                <h3 className="text-[13px] font-semibold">Queue runs</h3>
+                <p className="mt-1.5 text-[11px] leading-4 text-pf-text-secondary">
+                  Create runs for the approved selection against an active target authorization.
+                  Execution sends traffic only to the authorized scope.
+                </p>
+                {authorizations.length === 0 ? (
+                  <p className="mt-3 rounded-md border border-pf-border bg-pf-surface-muted px-3 py-2.5 text-[11px] leading-4 text-pf-text-secondary">
+                    No active target authorization. Authorize a target in the project before queuing
+                    runs.
+                  </p>
+                ) : (
+                  <div className="mt-3 space-y-2">
+                    <label htmlFor="run-authorization" className="block text-[11px] font-medium">
+                      Target authorization
+                    </label>
+                    <select
+                      id="run-authorization"
+                      value={authorizationId}
+                      onChange={(event) => setAuthorizationId(event.target.value)}
+                      className="h-9 w-full rounded-md border border-pf-border-strong bg-pf-surface px-2 text-[12px] focus:border-pf-accent focus:outline-none"
+                    >
+                      {authorizations.map((authorization) => (
+                        <option key={authorization.id} value={authorization.id}>
+                          {authorization.scope.origin} · {authorization.limits.maxRequests} req
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => void handleQueueRuns()}
+                      disabled={queuing || !canEdit || authorizationId === ""}
+                      className="h-9 w-full rounded-md bg-pf-accent px-3 text-[12px] font-medium text-white transition-colors hover:bg-pf-accent-hover disabled:opacity-50"
+                    >
+                      {queuing ? "Queuing runs..." : "Queue runs"}
+                    </button>
+                    {!canEdit ? (
+                      <p className="text-[10px] leading-4 text-pf-text-muted">
+                        Your role permits review only; a collaborator or above can queue runs.
+                      </p>
+                    ) : null}
+                  </div>
+                )}
+                {runError ? (
+                  <p role="alert" className="mt-2 text-[11px] leading-4 text-pf-error">
+                    {runError}
+                  </p>
+                ) : null}
+                {runNotice ? (
+                  <p role="status" className="mt-2 text-[11px] leading-4 text-pf-success">
+                    {runNotice}
+                  </p>
+                ) : null}
               </section>
             ) : null}
           </aside>

@@ -113,6 +113,8 @@ const REQUIRED_FILES = [
   "scripts/run-with-env.mjs",
   "scripts/services.mjs",
   "apps/web/package.json",
+  "apps/web/src/ConnectRepository.tsx",
+  "apps/web/src/TargetsPanel.tsx",
   "services/analysis-worker/package.json",
   "packages/contracts/package.json",
   "packages/test-catalog/package.json",

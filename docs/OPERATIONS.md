@@ -199,17 +199,30 @@ gitignored and must never contain real target data.
 5. **Restore.** Follow the restore procedure above; validate with
    `db:backup:check` before resuming traffic.
 
-## End-to-end workflow (operator-invoked)
+## End-to-end workflow
 
-Neither analysis nor execution runs automatically; a human (or an external
-supervisor) drives each stage:
+By default the app is self-driving for local use: `PROBE_FORGE_ANALYSIS_JOB_LOOP=true`
+makes the analysis worker claim queued jobs and produce a draft plan, and
+`PROBE_FORGE_EXECUTION_DISPATCH_LOOP=true` makes the execution worker drain
+queued runs. Both are disabled by default in `.env.example` and can be turned off
+for CI or one-off runs.
+
+From the web app:
+
+1. Open a project and use **Connect a repository** — paste a public GitHub,
+   GitLab, or Bitbucket HTTPS link and pick a branch/tag/SHA. This queues an
+   analysis job; the plan appears under **Analysis jobs → Review plan**.
+2. Review and approve the plan.
+3. Register and authorize a target under **Targets**.
+4. In the plan review, choose the authorization under **Queue runs**.
+5. Open the run under **Runs** to see results, evidence, and the generated
+   report.
+
+The same stages can be driven by the operator binaries:
 
 ```bash
-bun run --cwd services/analysis-worker plan     # queued job -> draft plan (awaiting_approval)
-# review and approve the plan (web UI or POST /api/plans/{id}/approve)
-# POST /api/plans/{id}/runs with an active target authorization id
-cargo run -p probe-forge-execution-worker --bin dispatch -- --once   # execute queued runs
-# POST /api/runs/{id}/report to generate the versioned report
+bun run --cwd services/analysis-worker plan     # one-shot: process queued jobs
+cargo run -p probe-forge-execution-worker --bin dispatch -- --once   # one-shot dispatch
 ```
 
 `dispatch` enforces target scope, redirect, DNS, and budget policy below the
@@ -221,9 +234,10 @@ dispatcher; loopback/private targets stay blocked unless
 
 - No external metrics system is integrated; `/metricsz` and structured logs are
   the interfaces. There is no alerting.
-- Analysis and execution are operator-invoked binaries, not supervised daemons;
-  there is no scheduler-driven drain, so continuous operation needs an external
-  supervisor.
+- The analysis and execution loops are opt-in env flags, not supervised
+  daemons; for continuous non-local operation run them under an external
+  supervisor. Very large repositories can exceed the ingestion git timeout
+  (`PROBE_FORGE_ANALYSIS_GIT_TIMEOUT_MS`); raise it or split the repo.
 - Rate limits are per process window in a shared table; a multi-process
   deployment shares the table, but clock skew between hosts is not corrected.
 - Retention deletes immutable rows only through the opt-in path; it does not

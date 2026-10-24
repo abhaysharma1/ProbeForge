@@ -1,7 +1,12 @@
+import { DEFAULT_PLANNING_LIMITS } from "./agent/limits";
 import { loadConfig } from "./config";
 import { healthResponse, readinessResponse, SERVICE_NAME } from "./health";
+import { processJobOnce } from "./job-loop";
+import { type AuditSink, JsonLineAuditSink, MemoryAuditSink } from "./repository/audit";
 
 const config = loadConfig();
+
+let shuttingDown = false;
 
 const server = Bun.serve({
   hostname: config.hostname,
@@ -19,21 +24,68 @@ const server = Bun.serve({
   },
 });
 
-console.log(
-  JSON.stringify({
-    level: "info",
-    service: SERVICE_NAME,
-    event: "listening",
-    address: `http://${server.hostname}:${server.port}`,
-  }),
-);
+function log(event: string, fields: Record<string, unknown> = {}): void {
+  console.log(JSON.stringify({ level: "info", service: SERVICE_NAME, event, ...fields }));
+}
 
-let shuttingDown = false;
+log("listening", { address: `http://${server.hostname}:${server.port}` });
+
+/**
+ * Background job loop: claim queued jobs and produce a draft plan. It is
+ * disabled unless PROBE_FORGE_ANALYSIS_JOB_LOOP=true, so tests and one-off runs
+ * keep full control. With no planning model configured it uses the
+ * deterministic fallback planner; it never executes repository code or a
+ * target.
+ */
+async function runJobLoop(): Promise<void> {
+  const connectionString = process.env.DATABASE_URL?.trim();
+  if (connectionString === undefined || connectionString.length === 0) {
+    log("job_loop_disabled", { reason: "DATABASE_URL is not set" });
+    return;
+  }
+  const audit: AuditSink =
+    config.ingestion.auditLogPath === null
+      ? new MemoryAuditSink()
+      : new JsonLineAuditSink(config.ingestion.auditLogPath);
+  log("job_loop_started", { intervalMs: config.jobLoopIntervalMs });
+
+  while (!shuttingDown) {
+    try {
+      const result = await processJobOnce(connectionString, {
+        workerId: (process.env.PROBE_FORGE_ANALYSIS_WORKER_ID ?? "analysis-worker-1").trim(),
+        allowLocalFixtures: config.ingestion.allowLocalFixtures,
+        allowedGitHosts: config.ingestion.allowedGitHosts,
+        ingestionLimits: config.ingestion.limits,
+        planningLimits: DEFAULT_PLANNING_LIMITS,
+        audit,
+      });
+      if (result !== null) {
+        log("job_processed", { ...result });
+      }
+    } catch (error) {
+      console.log(
+        JSON.stringify({
+          level: "warn",
+          service: SERVICE_NAME,
+          event: "job_loop_error",
+          message: error instanceof Error ? error.message : "unexpected error",
+        }),
+      );
+    }
+    if (!shuttingDown) {
+      await Bun.sleep(config.jobLoopIntervalMs);
+    }
+  }
+}
+
+if (config.jobLoop) {
+  void runJobLoop();
+}
 
 async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log(JSON.stringify({ level: "info", service: SERVICE_NAME, event: "shutdown", signal }));
+  log("shutdown", { signal });
   await server.stop(true);
   process.exit(0);
 }

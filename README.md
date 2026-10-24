@@ -125,6 +125,12 @@ Local endpoints (loopback only):
 
 Stop PostgreSQL with `bun run db:down`.
 
+Open http://127.0.0.1:5173, sign in, create a project, then use **Connect a
+repository** to paste a public GitHub/GitLab/Bitbucket link. Analysis runs in the
+background (see `PROBE_FORGE_ANALYSIS_JOB_LOOP`), so a proposed plan appears under
+**Analysis jobs** for review. See [docs/OPERATIONS.md](docs/OPERATIONS.md) for the
+full connect → approve → target → run → report workflow.
+
 ## Checks
 
 | Command | What it verifies |

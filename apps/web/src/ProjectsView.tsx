@@ -19,8 +19,10 @@ import {
   type ProjectRole,
   type RunSummaryEntry,
 } from "./api";
+import { ConnectRepository } from "./ConnectRepository";
 import { PlanReview } from "./PlanReview";
 import { RunReport } from "./RunReport";
+import { TargetsPanel } from "./TargetsPanel";
 
 interface ProjectsViewProps {
   readonly user: AuthUser;
@@ -748,6 +750,16 @@ export function ProjectsView({ user, csrfToken, onSignOut, onSessionExpired }: P
                         </dl>
                       </div>
 
+                      <ConnectRepository
+                        projectId={selected.id}
+                        csrfToken={csrfToken}
+                        canWrite={selected.role !== "viewer"}
+                        onCreated={() => {
+                          void loadDetails(selected.id, selected.role);
+                        }}
+                        onSessionExpired={onSessionExpired}
+                      />
+
                       <section
                         className="border-b border-pf-border px-5 py-4"
                         aria-labelledby="jobs-heading"
@@ -867,6 +879,13 @@ export function ProjectsView({ user, csrfToken, onSignOut, onSessionExpired }: P
                           </ul>
                         )}
                       </section>
+
+                      <TargetsPanel
+                        projectId={selected.id}
+                        csrfToken={csrfToken}
+                        canWrite={selected.role !== "viewer"}
+                        onSessionExpired={onSessionExpired}
+                      />
 
                       <section
                         className="border-b border-pf-border px-5 py-4"

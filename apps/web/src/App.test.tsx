@@ -370,6 +370,9 @@ interface FetchOptions {
   readonly planApproveStatus?: number;
   readonly runs?: readonly unknown[];
   readonly runDetail?: unknown;
+  readonly targets?: readonly unknown[];
+  readonly createdJob?: unknown;
+  readonly createJobStatus?: number;
 }
 
 function installFetch(options: FetchOptions) {
@@ -510,6 +513,20 @@ function installFetch(options: FetchOptions) {
       }
       currentPlan = planWithSelection(body.selectedTestIds ?? []);
       return mockResponse(currentPlan);
+    }
+
+    if (url.includes("/api/projects/") && url.endsWith("/targets") && method === "GET") {
+      return mockResponse(options.targets ?? []);
+    }
+
+    if (url.includes("/api/jobs?") && method === "POST") {
+      if (options.createJobStatus && options.createJobStatus >= 400) {
+        return mockResponse(
+          { error: { code: "invalid_repository_url", message: "Repository URL is not valid." } },
+          options.createJobStatus,
+        );
+      }
+      return mockResponse(options.createdJob ?? JOB, 201);
     }
 
     if (url.includes("/members")) {
@@ -690,6 +707,36 @@ describe("App", () => {
     expect(screen.getByText("HYPOTHESIS")).toBeInTheDocument();
     expect(screen.getByText(/stored reference/)).toBeInTheDocument();
     expect(screen.getByText("https://inert.example.test")).toBeInTheDocument();
+  });
+
+  it("connects a public repository and reports queued analysis", async () => {
+    await renderSignedIn({
+      session: true,
+      projects: [PROJECT],
+      targets: [],
+      createdJob: JOB,
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
+
+    const repoInput = await screen.findByLabelText("Repository URL");
+    fireEvent.change(repoInput, { target: { value: "https://github.com/owner/repo" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect repository" }));
+
+    expect(await screen.findByText(/Connected "Payments plan review"/)).toBeInTheDocument();
+  });
+
+  it("rejects a non-public repository URL before submitting", async () => {
+    await renderSignedIn({ session: true, projects: [PROJECT], targets: [] });
+
+    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
+
+    const repoInput = await screen.findByLabelText("Repository URL");
+    fireEvent.change(repoInput, { target: { value: "http://192.168.0.10/repo" } });
+    expect(
+      await screen.findByText(/Only public HTTPS repository URLs are supported/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Connect repository" })).toBeDisabled();
   });
 
   it("shows a reload action when a concurrent edit conflicts", async () => {

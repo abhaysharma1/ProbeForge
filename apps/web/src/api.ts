@@ -417,6 +417,158 @@ export function runReportExportPath(runId: string, format: "json" | "markdown"):
   return `${API_BASE}/runs/${runId}/report/export?format=${format}`;
 }
 
+export type JobIntensity = "low" | "standard" | "high";
+
+export interface StartJobInput {
+  readonly goal: JobGoal;
+  readonly intensity: JobIntensity;
+  readonly displayName: string;
+  readonly repositoryUrl: string;
+  readonly reference: string;
+}
+
+export function createJob(
+  projectId: string,
+  input: StartJobInput,
+  csrfToken: string,
+): Promise<Job> {
+  return unsafeRequest<Job>("POST", `/jobs?projectId=${encodeURIComponent(projectId)}`, csrfToken, {
+    schemaVersion: "1",
+    goal: input.goal,
+    intensity: input.intensity,
+    displayName: input.displayName,
+    git: { repositoryUrl: input.repositoryUrl, reference: input.reference },
+  });
+}
+
+export function cancelJob(jobId: string, csrfToken: string): Promise<Job> {
+  return unsafeRequest<Job>("POST", `/jobs/${jobId}/cancel`, csrfToken);
+}
+
+export type TargetEnvironment = "local" | "staging" | "production";
+
+export interface Target {
+  readonly id: string;
+  readonly projectId: string;
+  readonly normalizedOrigin: string;
+  readonly environment: TargetEnvironment;
+  readonly allowedHosts: readonly string[];
+  readonly allowedPaths: readonly string[];
+  readonly allowedPorts: readonly number[];
+  readonly verificationStatus: string;
+  readonly verificationCheckedAt: string | null;
+  readonly verifiedAddresses: readonly string[];
+  readonly createdBy: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface TargetScope {
+  readonly origin: string;
+  readonly allowedHosts: readonly string[];
+  readonly allowedPaths: readonly string[];
+  readonly allowedPorts: readonly number[];
+}
+
+export interface TargetLimits {
+  readonly maxRequestsPerSecond: number;
+  readonly maxConcurrency: number;
+  readonly maxDurationSeconds: number;
+  readonly maxRequests: number;
+}
+
+export interface TargetAuthorization {
+  readonly id: string;
+  readonly projectId: string;
+  readonly targetId: string;
+  readonly authorizationMethod: string;
+  readonly scope: TargetScope;
+  readonly limits: TargetLimits;
+  readonly confirmedAt: string;
+  readonly validFrom: string;
+  readonly expiresAt: string | null;
+  readonly revokedAt: string | null;
+  readonly active: boolean;
+}
+
+export interface CreateTargetInput {
+  readonly origin: string;
+  readonly environment: TargetEnvironment;
+  readonly allowedHosts?: readonly string[];
+  readonly allowedPaths?: readonly string[];
+  readonly allowedPorts?: readonly number[];
+}
+
+export function listTargets(projectId: string): Promise<Target[]> {
+  return request<Target[]>(`/projects/${projectId}/targets`);
+}
+
+export function createTarget(
+  projectId: string,
+  input: CreateTargetInput,
+  csrfToken: string,
+): Promise<Target> {
+  return unsafeRequest<Target>("POST", `/projects/${projectId}/targets`, csrfToken, input);
+}
+
+export function validateTarget(targetId: string, csrfToken: string): Promise<Target> {
+  return unsafeRequest<Target>("POST", `/targets/${targetId}/validate`, csrfToken);
+}
+
+export function listAuthorizations(targetId: string): Promise<TargetAuthorization[]> {
+  return request<TargetAuthorization[]>(`/targets/${targetId}/authorizations`);
+}
+
+export function createAuthorization(
+  targetId: string,
+  limits: TargetLimits,
+  csrfToken: string,
+  expiresAt?: string | null,
+): Promise<TargetAuthorization> {
+  return unsafeRequest<TargetAuthorization>(
+    "POST",
+    `/targets/${targetId}/authorizations`,
+    csrfToken,
+    {
+      authorizationMethod: "explicit_confirmation",
+      confirmed: true,
+      limits,
+      ...(expiresAt ? { expiresAt } : {}),
+    },
+  );
+}
+
+export function revokeAuthorization(
+  authorizationId: string,
+  csrfToken: string,
+): Promise<TargetAuthorization> {
+  return unsafeRequest<TargetAuthorization>(
+    "POST",
+    `/target-authorizations/${authorizationId}/revoke`,
+    csrfToken,
+  );
+}
+
+export interface RunRef {
+  readonly id: string;
+  readonly runType: JobGoal;
+  readonly status: string;
+}
+
+export function createRuns(
+  planId: string,
+  targetAuthorizationId: string,
+  csrfToken: string,
+): Promise<RunRef[]> {
+  return unsafeRequest<RunRef[]>("POST", `/plans/${planId}/runs`, csrfToken, {
+    targetAuthorizationId,
+  });
+}
+
+export function cancelRun(runId: string, csrfToken: string): Promise<RunRef> {
+  return unsafeRequest<RunRef>("POST", `/runs/${runId}/cancel`, csrfToken);
+}
+
 export function updatePlanSelection(
   planId: string,
   expectedRevision: number,
