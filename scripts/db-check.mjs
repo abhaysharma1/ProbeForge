@@ -38,6 +38,8 @@ const commands = [
       "results_reports",
       "--test",
       "operations",
+      "--test",
+      "runs_lifecycle",
       "--",
       "--nocapture",
     ],

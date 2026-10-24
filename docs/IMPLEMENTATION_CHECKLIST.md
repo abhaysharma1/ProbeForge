@@ -424,7 +424,7 @@ Legend: `[x]` done with evidence - `[ ]` not done.
 
 ## Phase 15 — End-to-end acceptance using local fixtures
 
-**Status:** Not started
+**Status:** In progress - run materialization and cancellation from an approved plan are implemented and tested (`services/api/src/runs.rs`, `services/api/tests/runs_lifecycle.rs`). The analysis worker job loop, execution-worker dispatch (vulnerability and load), and the end-to-end acceptance suite remain.
 
 **Tasks**
 

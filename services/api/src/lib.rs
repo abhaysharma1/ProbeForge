@@ -10,6 +10,7 @@ pub mod projects;
 pub mod quotas;
 pub mod rate_limit;
 pub mod results;
+pub mod runs;
 pub mod targets;
 
 use std::{fmt, net::SocketAddr, sync::Arc, time::Duration};
@@ -235,6 +236,7 @@ pub fn router(state: AppState) -> Router {
         .merge(targets::routes())
         .merge(results::routes())
         .merge(quotas::routes())
+        .merge(runs::routes())
         // Authentication runs before CSRF so an anonymous unsafe request gets a
         // consistent 401 rather than a CSRF 403. Authenticated unsafe requests
         // still pass through the CSRF guard. Rate limiting runs after auth (so

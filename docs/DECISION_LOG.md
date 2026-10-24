@@ -372,6 +372,16 @@ Format per decision: status, context, decision, rationale, alternatives, impact.
 - **Alternatives:** Document only without a test (rejected: gate requires tested); restore in place (rejected: destructive); require a host `pg_dump` (rejected: it may be absent, while the container always has it).
 - **Impact:** `bun run db:backup`, `db:restore`, and `db:backup:check` are available; `backups/` is gitignored. See `docs/OPERATIONS.md`.
 
+### D-039 - Runs are materialized from an approved plan plus an active authorization
+
+- **Date:** 2026-10-24
+- **Status:** Accepted (Phase 15, in progress)
+- **Context:** Phase 13 consumed `test_runs`, but nothing created them: approving a plan records an immutable selection only, and `test_runs` requires a non-null target authorization and a run type that matches the selection shape. Phase 15 must start work without inventing an unapproved execution path.
+- **Decision:** Add `POST /api/plans/{plan_id}/runs` (body `{ targetAuthorizationId }`) that, for an approved plan, verifies the authorization belongs to the project and is active, then creates one `queued` run per approved planned test (vulnerability) or load scenario. Creation is idempotent per `(approval, selection)` via the run idempotency key, and each new run appends a `run.queued` job event and a `run.queued` audit row. Add `POST /api/runs/{run_id}/cancel` for pre-execution states; a leased running run is refused so its worker stops it and reports the outcome.
+- **Rationale:** Keeping selection (approval) separate from execution (run + authorization) preserves the Phase 8 gate that no run exists without approval, and reusing the existing idempotency key avoids duplicate work on retry. Runs stay `queued` until the execution worker claims them, which keeps the security-sensitive network path gated behind the queue.
+- **Alternatives:** Create runs at approval time (rejected: no target authorization exists yet and it would start work without an explicit execution choice); let the frontend talk to the queue (rejected: server-owned authority); cancel running runs directly (rejected: would race the lease owner).
+- **Impact:** The API can now produce queued runs, but the execution worker does not yet claim them and the analysis worker does not yet turn a queued job into a plan, so Phase 15's exit gate is not met. Both remain the next work items.
+
 ## Open questions
 
 | ID | Question | Needed by | Notes |
