@@ -34,6 +34,25 @@ fn full_update(provider: &str, model: &str) -> serde_json::Value {
     })
 }
 
+fn custom_endpoint_update(base_url: &str) -> serde_json::Value {
+    json!({
+        "planningProvider": "nebius",
+        "planningModel": "deepseek-ai/DeepSeek-V3",
+        "planningBaseUrl": base_url,
+        "planningContextWindow": 131072,
+        "planningMaxOutputTokens": 8192,
+        "planningLimits": {},
+        "apiRequestsPerMinute": 240,
+        "expensiveRequestsPerMinute": 20,
+        "retentionEventDays": 30,
+        "retentionReportDays": 180,
+        "retentionCounterDays": 7,
+        "defaultMaxActiveRuns": 2,
+        "defaultMaxRequestsPerWindow": null,
+        "defaultWindowSeconds": 86400
+    })
+}
+
 #[tokio::test]
 async fn settings_require_admin_and_round_trip_non_secret_values() {
     let Some(app) = TestApp::setup().await else {
@@ -112,6 +131,52 @@ async fn settings_require_admin_and_round_trip_non_secret_values() {
         )
         .await;
     assert_eq!(bad_range.status, StatusCode::BAD_REQUEST);
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn settings_round_trip_a_custom_openai_compatible_endpoint() {
+    let Some(app) = TestApp::setup().await else {
+        return;
+    };
+    let admin = make_admin(&app, "admin-custom-provider@example.test").await;
+
+    // A public HTTPS OpenAI-compatible endpoint is accepted and stored.
+    let updated = app
+        .send(
+            Method::PUT,
+            "/api/admin/settings",
+            Some(&admin),
+            Some(custom_endpoint_update("https://api.studio.nebius.com/v1")),
+        )
+        .await;
+    assert_eq!(updated.status, StatusCode::OK, "{:?}", updated.body);
+    assert_eq!(
+        updated.body["planning"]["baseUrl"],
+        "https://api.studio.nebius.com/v1"
+    );
+    assert_eq!(updated.body["planning"]["contextWindow"], 131_072);
+    assert_eq!(updated.body["planning"]["maxOutputTokens"], 8_192);
+
+    // Non-HTTPS and internal base URLs are rejected before persistence.
+    for base_url in ["http://api.studio.nebius.com/v1", "https://127.0.0.1/v1"] {
+        let rejected = app
+            .send(
+                Method::PUT,
+                "/api/admin/settings",
+                Some(&admin),
+                Some(custom_endpoint_update(base_url)),
+            )
+            .await;
+        assert_eq!(
+            rejected.status,
+            StatusCode::BAD_REQUEST,
+            "{:?}",
+            rejected.body
+        );
+        assert_eq!(rejected.body["error"]["code"], "invalid_planning_base_url");
+    }
 
     app.cleanup().await;
 }

@@ -10,6 +10,9 @@ import { decryptSecret, loadSettingsKey } from "./platform-crypto";
 export interface PlatformPlanningSettings {
   readonly provider: string | null;
   readonly model: string | null;
+  readonly baseUrl: string | null;
+  readonly contextWindow: number | null;
+  readonly maxOutputTokens: number | null;
   readonly limitsOverride: Record<string, unknown>;
   readonly apiKey: string | null;
 }
@@ -17,13 +20,18 @@ export interface PlatformPlanningSettings {
 interface Row {
   readonly planning_provider: string | null;
   readonly planning_model: string | null;
+  readonly planning_base_url: string | null;
+  readonly planning_context_window: number | null;
+  readonly planning_max_output_tokens: number | null;
   readonly planning_limits: Record<string, unknown>;
   readonly planning_api_key_ciphertext: string | null;
 }
 
 export async function loadPlatformPlanning(sql: SQL): Promise<PlatformPlanningSettings> {
   const rows = await sql<Row[]>`
-    SELECT planning_provider, planning_model, planning_limits, planning_api_key_ciphertext
+    SELECT planning_provider, planning_model, planning_base_url,
+           planning_context_window, planning_max_output_tokens, planning_limits,
+           planning_api_key_ciphertext
     FROM platform_settings
     WHERE id = true
   `;
@@ -43,6 +51,9 @@ export async function loadPlatformPlanning(sql: SQL): Promise<PlatformPlanningSe
   return {
     provider: row?.planning_provider ?? null,
     model: row?.planning_model ?? null,
+    baseUrl: row?.planning_base_url ?? null,
+    contextWindow: row?.planning_context_window ?? null,
+    maxOutputTokens: row?.planning_max_output_tokens ?? null,
     limitsOverride: row?.planning_limits ?? {},
     apiKey,
   };

@@ -74,14 +74,18 @@ databaseDescribe("analysis job loop (integration)", () => {
   afterAll(async () => {
     if (connectionString === undefined) return;
     if (projectId !== undefined) {
-      // audit_log is immutable by design; this disposable test database clears
-      // only its own fixture rows with the trigger briefly disabled.
+      // audit_log and job_events are immutable by design; this disposable test
+      // database clears only its own fixture rows with the triggers briefly
+      // disabled. The worker now writes job_events, so that trigger must be
+      // disabled too or the cascade from `projects` is rejected.
       await admin`ALTER TABLE audit_log DISABLE TRIGGER audit_log_immutable`;
+      await admin`ALTER TABLE job_events DISABLE TRIGGER job_events_immutable`;
       try {
         await admin`DELETE FROM audit_log WHERE project_id = ${projectId}`;
         await admin`DELETE FROM projects WHERE id = ${projectId}`;
         await admin`DELETE FROM users WHERE id = ${userId}`;
       } finally {
+        await admin`ALTER TABLE job_events ENABLE TRIGGER job_events_immutable`;
         await admin`ALTER TABLE audit_log ENABLE TRIGGER audit_log_immutable`;
       }
     }
@@ -129,6 +133,15 @@ databaseDescribe("analysis job loop (integration)", () => {
       WHERE action = 'plan.fallback_proposed'
     `;
     expect(Number(audit[0]?.count)).toBeGreaterThan(0);
+
+    // The worker-driven transitions are recorded in the ordered job event
+    // stream so the API can replay them over SSE.
+    const events = await admin<{ event_type: string; sequence: string }[]>`
+      SELECT event_type, sequence FROM job_events
+      WHERE job_id = ${jobId}
+      ORDER BY sequence
+    `;
+    expect(events.map((event) => event.event_type)).toEqual(["job.claimed", "plan.proposed"]);
 
     // A second call finds no queued job.
     const second = await processJobOnce(connectionString, {

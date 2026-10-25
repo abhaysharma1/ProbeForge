@@ -70,6 +70,17 @@ function fixedGitArguments(target: GitTarget, hooksPath: string): string[] {
   return args;
 }
 
+/**
+ * The fetch invocation used to materialize the pinned commit. It is deliberately
+ * a full blob fetch: the worker checks out and reads every file, so a blobs-less
+ * partial clone (`--filter=blob:none`) would only replace one bulk pack download
+ * with many slow on-demand fetches. Keeping blobs local makes every later git
+ * command (`ls-tree -l`, `checkout`, file reads) run without network access.
+ */
+export function fetchArguments(sha: string): string[] {
+  return ["fetch", "--quiet", "--depth=1", "--no-tags", "origin", sha];
+}
+
 export async function createGitEnvironment(
   workspace: TemporaryWorkspace,
   target: GitTarget,
@@ -96,6 +107,9 @@ export async function createGitEnvironment(
     GIT_PAGER: "cat",
     PAGER: "cat",
     GIT_OPTIONAL_LOCKS: "0",
+    // A complete fetch is required; any missing object is a bug, not a reason to
+    // silently reach back out to the network and hang until the git timeout.
+    GIT_NO_LAZY_FETCH: "1",
     GIT_LFS_SKIP_SMUDGE: "1",
     GIT_SSH_COMMAND: sshCommand,
     LC_ALL: "C",
@@ -126,18 +140,25 @@ function shellSingleQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-function mapProcessError(error: unknown, fallbackMessage: string): RepositoryIngestError {
+function mapProcessError(
+  error: unknown,
+  fallbackMessage: string,
+  operation: string | null = null,
+): RepositoryIngestError {
   if (error instanceof RepositoryIngestError) return error;
+  const withOperation = operation === null ? {} : { operation };
   if (error instanceof BoundedProcessError) {
     if (error.code === "process_aborted") {
       return new RepositoryIngestError("cancelled", "Repository ingestion was cancelled", {
         cause: error,
+        ...withOperation,
       });
     }
     if (error.code === "process_timeout") {
       return new RepositoryIngestError("git_timeout", "Git command timed out", {
         cause: error,
         retryable: true,
+        ...withOperation,
       });
     }
     if (error.code === "process_output_limit") {
@@ -146,22 +167,26 @@ function mapProcessError(error: unknown, fallbackMessage: string): RepositoryIng
         "Git command output exceeded its limit",
         {
           cause: error,
+          ...withOperation,
         },
       );
     }
     if (error.code === "process_spawn_failed") {
       return new RepositoryIngestError("git_unavailable", "Git is not available", {
         cause: error,
+        ...withOperation,
       });
     }
     return new RepositoryIngestError("git_failed", fallbackMessage, {
       cause: error,
       retryable: true,
+      ...withOperation,
     });
   }
   return new RepositoryIngestError("git_failed", fallbackMessage, {
     cause: error,
     retryable: true,
+    ...withOperation,
   });
 }
 
@@ -295,11 +320,7 @@ export class GitClient {
     await this.#run(["init", "--quiet"], 8_192, this.#workspace.repoPath);
     await this.#run(["remote", "add", "origin", this.#target.url], 8_192, this.#workspace.repoPath);
     try {
-      await this.#run(
-        ["fetch", "--quiet", "--depth=1", "--no-tags", "--filter=blob:none", "origin", sha],
-        16_384,
-        this.#workspace.repoPath,
-      );
+      await this.#run(fetchArguments(sha), 16_384, this.#workspace.repoPath);
     } catch (error) {
       if (isMissingCommitError(error)) {
         throw new RepositoryIngestError(
@@ -339,6 +360,7 @@ export class GitClient {
   }
 
   async #run(args: readonly string[], maxOutputBytes: number, cwd?: string): Promise<string> {
+    const operation = args[0] ?? null;
     try {
       const result = await runBoundedProcess("git", [...this.#command.args, ...args], {
         ...(cwd === undefined ? {} : { cwd }),
@@ -363,11 +385,15 @@ export class GitClient {
                     ? "git_unavailable"
                     : "git_failed",
             redacted,
-            { cause: error, retryable: error.code !== "process_output_limit" },
+            {
+              cause: error,
+              retryable: error.code !== "process_output_limit",
+              ...(operation === null ? {} : { operation }),
+            },
           );
         }
       }
-      throw mapProcessError(error, "Git command failed");
+      throw mapProcessError(error, "Git command failed", operation);
     }
   }
 }

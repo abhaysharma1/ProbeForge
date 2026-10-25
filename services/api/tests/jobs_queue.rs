@@ -435,3 +435,132 @@ async fn cancellation_clears_leases_and_sse_replays_after_last_event_id() {
 
     fixture.app.cleanup().await;
 }
+
+#[tokio::test]
+async fn rerun_requeues_terminal_jobs_and_audits() {
+    let Some(fixture) = fixture().await else {
+        return;
+    };
+    let app = &fixture.app;
+
+    let response = create_job_with_key(
+        app,
+        &fixture.owner,
+        &fixture.project_id,
+        "rerun-job",
+        "Rerun test",
+    )
+    .await;
+    assert_eq!(response.status, StatusCode::CREATED, "{:?}", response.body);
+    let job_id = Uuid::parse_str(response.body["id"].as_str().expect("job id")).expect("uuid");
+
+    // A queued job cannot be re-run.
+    let response = app
+        .send(
+            axum::http::Method::POST,
+            &format!("/api/jobs/{job_id}/rerun"),
+            Some(&fixture.owner),
+            None,
+        )
+        .await;
+    assert_eq!(response.status, StatusCode::CONFLICT, "{:?}", response.body);
+    assert_eq!(response.body["error"]["code"], "job_not_requirable");
+
+    // Viewers and non-members are rejected.
+    let response = app
+        .send(
+            axum::http::Method::POST,
+            &format!("/api/jobs/{job_id}/rerun"),
+            Some(&fixture.viewer),
+            None,
+        )
+        .await;
+    assert_eq!(response.status, StatusCode::FORBIDDEN);
+    let response = app
+        .send(
+            axum::http::Method::POST,
+            &format!("/api/jobs/{job_id}/rerun"),
+            Some(&fixture.outsider),
+            None,
+        )
+        .await;
+    assert_eq!(response.status, StatusCode::NOT_FOUND);
+
+    // Exhaust the attempt budget and fail the job terminally.
+    sqlx::query(
+        "UPDATE jobs SET status = 'failed', attempt = 3, last_error_code = 'agent_timeout' \
+         WHERE id = $1",
+    )
+    .bind(job_id)
+    .execute(&app.pool)
+    .await
+    .expect("mark failed");
+
+    let response = app
+        .send(
+            axum::http::Method::POST,
+            &format!("/api/jobs/{job_id}/rerun"),
+            Some(&fixture.owner),
+            None,
+        )
+        .await;
+    assert_eq!(response.status, StatusCode::OK, "{:?}", response.body);
+    assert_eq!(response.body["status"], "queued");
+    assert_eq!(response.body["attempt"], 0);
+    assert!(response.body["workerId"].is_null());
+    assert!(response.body["lastErrorCode"].is_null());
+
+    let requeued: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM job_events WHERE job_id = $1 AND event_type = 'job.requeued'",
+    )
+    .bind(job_id)
+    .fetch_one(&app.pool)
+    .await
+    .expect("requeue event");
+    assert_eq!(requeued, 1);
+
+    let audited: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'job.rerun_requested' AND resource_id = $1",
+    )
+    .bind(job_id)
+    .fetch_one(&app.pool)
+    .await
+    .expect("rerun audit");
+    assert_eq!(audited, 1);
+
+    // A cancelled job is also re-runnable.
+    let response = create_job_with_key(
+        app,
+        &fixture.owner,
+        &fixture.project_id,
+        "cancel-then-rerun",
+        "Cancelled then rerun",
+    )
+    .await;
+    assert_eq!(response.status, StatusCode::CREATED, "{:?}", response.body);
+    let cancelled_id =
+        Uuid::parse_str(response.body["id"].as_str().expect("job id")).expect("uuid");
+
+    let response = app
+        .send(
+            axum::http::Method::POST,
+            &format!("/api/jobs/{cancelled_id}/cancel"),
+            Some(&fixture.owner),
+            None,
+        )
+        .await;
+    assert_eq!(response.status, StatusCode::OK, "{:?}", response.body);
+
+    let response = app
+        .send(
+            axum::http::Method::POST,
+            &format!("/api/jobs/{cancelled_id}/rerun"),
+            Some(&fixture.owner),
+            None,
+        )
+        .await;
+    assert_eq!(response.status, StatusCode::OK, "{:?}", response.body);
+    assert_eq!(response.body["status"], "queued");
+
+    fixture.app.cleanup().await;
+}

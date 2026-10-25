@@ -11,6 +11,7 @@ pub mod platform_settings;
 pub mod projects;
 pub mod quotas;
 pub mod rate_limit;
+pub mod repositories;
 pub mod results;
 pub mod runs;
 pub mod settings_secrets;
@@ -248,6 +249,7 @@ pub fn router(state: AppState) -> Router {
         )
         .merge(projects::routes())
         .merge(jobs::routes())
+        .merge(repositories::routes())
         .merge(plans::routes())
         .merge(targets::routes())
         .merge(results::routes())

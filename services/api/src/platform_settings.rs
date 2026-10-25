@@ -13,6 +13,9 @@ use sqlx::{FromRow, PgPool};
 pub struct PlatformSettingsRow {
     pub planning_provider: Option<String>,
     pub planning_model: Option<String>,
+    pub planning_base_url: Option<String>,
+    pub planning_context_window: Option<i32>,
+    pub planning_max_output_tokens: Option<i32>,
     pub planning_limits: Value,
     pub planning_api_key_ciphertext: Option<String>,
     pub planning_api_key_hint: Option<String>,
@@ -30,7 +33,8 @@ pub struct PlatformSettingsRow {
 }
 
 const COLUMNS: &str = r#"
-    planning_provider, planning_model, planning_limits,
+    planning_provider, planning_model, planning_base_url,
+    planning_context_window, planning_max_output_tokens, planning_limits,
     planning_api_key_ciphertext, planning_api_key_hint, planning_api_key_updated_at,
     api_requests_per_minute, expensive_requests_per_minute,
     retention_event_days, retention_report_days, retention_counter_days,

@@ -109,6 +109,10 @@ pub enum EventType {
     JobFailed,
     #[serde(rename = "job.cancelled")]
     JobCancelled,
+    /// An operator requeued a terminal job (failed, cancelled, or expired) for a
+    /// fresh attempt. Operator-visible and part of the SSE replay contract.
+    #[serde(rename = "job.requeued")]
+    JobRequeued,
     #[serde(rename = "repository.clone.started")]
     RepositoryCloneStarted,
     #[serde(rename = "repository.snapshot.ready")]

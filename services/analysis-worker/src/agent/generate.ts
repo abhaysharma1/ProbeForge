@@ -8,7 +8,11 @@ import {
   FALLBACK_PROVIDER,
   type FallbackReason,
 } from "./fallback";
-import { DEFAULT_PLANNING_LIMITS, type PlanningLimits, validatePlanningLimits } from "./limits";
+import {
+  DEFAULT_PLANNING_LIMITS,
+  type PlanningLimits,
+  validatePlanningLimits,
+} from "./limits";
 import type { PlanningRuntime } from "./model";
 import {
   createPlanningContext,
@@ -21,7 +25,11 @@ import { type PlanStore, PlanStoreError, type SavedPlan } from "./store";
 import { createPlanningToolSession, type PlanningToolStats } from "./tools";
 import { validateCandidatePlan } from "./validate";
 
-export type PlanGenerationOutcome = "planned" | "fallback" | "retryable_failure" | "cancelled";
+export type PlanGenerationOutcome =
+  | "planned"
+  | "fallback"
+  | "retryable_failure"
+  | "cancelled";
 
 export interface PlanGenerationOptions {
   readonly runtime: PlanningRuntime | null;
@@ -77,8 +85,16 @@ interface AttemptStats {
 }
 
 type AttemptOutcome =
-  | { readonly status: "proposed"; readonly plan: Plan; readonly stats: AttemptStats }
-  | { readonly status: "failed"; readonly failure: AttemptFailure; readonly stats: AttemptStats }
+  | {
+      readonly status: "proposed";
+      readonly plan: Plan;
+      readonly stats: AttemptStats;
+    }
+  | {
+      readonly status: "failed";
+      readonly failure: AttemptFailure;
+      readonly stats: AttemptStats;
+    }
   | { readonly status: "cancelled"; readonly stats: AttemptStats };
 
 const ZERO_TOOL_STATS: PlanningToolStats = {
@@ -118,6 +134,7 @@ function failureForStopReason(stopReason: string): AttemptFailure {
     };
   }
   if (stopReason === "length") {
+    console.log("length")
     return {
       code: "planning_limit_exceeded",
       retryable: false,
@@ -185,7 +202,10 @@ async function runAgentAttempt(
   attempt: number,
   maxAttempts: number,
   externalSignal?: AbortSignal,
-): Promise<{ readonly outcome: AttemptOutcome; readonly sessionId: string | null }> {
+): Promise<{
+  readonly outcome: AttemptOutcome;
+  readonly sessionId: string | null;
+}> {
   const startedAt = Date.now();
   let sessionId: string | null = null;
   try {
@@ -194,7 +214,9 @@ async function runAgentAttempt(
       jobId: context.job.id,
       provider: runtime.provider,
       model: runtime.model,
-      metadata: sessionMetadata(context, attempt, maxAttempts, { status: "started" }),
+      metadata: sessionMetadata(context, attempt, maxAttempts, {
+        status: "started",
+      }),
     });
   } catch {
     return {
@@ -255,6 +277,7 @@ async function runAgentAttempt(
     if (failure !== null) return { action: "end" };
     const tools = toolSession.stats();
     if (tools.limitReached !== null) {
+      console.log("tool limit")
       failure ??= {
         code: "planning_limit_exceeded",
         retryable: false,
@@ -263,6 +286,7 @@ async function runAgentAttempt(
       return { action: "end" };
     }
     if (turns >= context.limits.maxTurns) {
+      console.log("max turns")
       failure ??= {
         code: "planning_limit_exceeded",
         retryable: false,
@@ -288,6 +312,7 @@ async function runAgentAttempt(
       prepareRequest: () => {
         modelCalls += 1;
         if (modelCalls > context.limits.maxModelCalls) {
+          console.log("model calls")
           failure ??= {
             code: "planning_limit_exceeded",
             retryable: false,
@@ -315,7 +340,10 @@ async function runAgentAttempt(
     await Promise.race([promptPromise, abortWait]);
     if (!promptSettled) {
       agent.abort();
-      await Promise.race([promptPromise, new Promise<void>((resolve) => setTimeout(resolve, 250))]);
+      await Promise.race([
+        promptPromise,
+        new Promise<void>((resolve) => setTimeout(resolve, 250)),
+      ]);
     }
 
     const elapsedMs = Date.now() - startedAt;
@@ -357,6 +385,7 @@ async function runAgentAttempt(
       };
     }
     if (failure === null && tools.limitReached !== null) {
+      console.log("tool limit")
       failure = {
         code: "planning_limit_exceeded",
         retryable: false,
@@ -364,6 +393,7 @@ async function runAgentAttempt(
       };
     }
     if (failure === null && modelCalls > context.limits.maxModelCalls) {
+      console.log("max model calls")
       failure = {
         code: "planning_limit_exceeded",
         retryable: false,
@@ -436,7 +466,10 @@ async function bestEffortComplete(
   }
 }
 
-function addStats(left: PlanGenerationStats, right: AttemptStats): PlanGenerationStats {
+function addStats(
+  left: PlanGenerationStats,
+  right: AttemptStats,
+): PlanGenerationStats {
   return {
     attempts: left.attempts + 1,
     modelCalls: left.modelCalls + right.modelCalls,
@@ -559,7 +592,12 @@ async function persistFallback(
         fallbackReason: reason,
       }),
     );
-    return result("retryable_failure", { fallbackReason: reason, failureCode }, stats, sessions);
+    return result(
+      "retryable_failure",
+      { fallbackReason: reason, failureCode },
+      stats,
+      sessions,
+    );
   }
 }
 
@@ -589,7 +627,13 @@ export async function generatePlan(
     return result("cancelled", {}, stats, sessions);
   }
   if (options.runtime === null) {
-    return persistFallback(context, options.store, "model_not_configured", stats, sessions);
+    return persistFallback(
+      context,
+      options.store,
+      "model_not_configured",
+      stats,
+      sessions,
+    );
   }
 
   let prompt: string;
@@ -625,7 +669,12 @@ export async function generatePlan(
 
     if (run.outcome.status === "proposed") {
       if (run.sessionId === null) {
-        return result("retryable_failure", { failureCode: "session_missing" }, stats, sessions);
+        return result(
+          "retryable_failure",
+          { failureCode: "session_missing" },
+          stats,
+          sessions,
+        );
       }
       if (isAborted(options.signal)) {
         await bestEffortComplete(options.store, run.sessionId, "cancelled", {
@@ -678,9 +727,16 @@ export async function generatePlan(
   if (isAborted(options.signal)) {
     return result("cancelled", {}, stats, sessions);
   }
-  const fallback = await persistFallback(context, options.store, lastReason, stats, sessions);
+  const fallback = await persistFallback(
+    context,
+    options.store,
+    lastReason,
+    stats,
+    sessions,
+  );
   return {
     ...fallback,
-    failureCode: fallback.outcome === "fallback" ? lastFailureCode : fallback.failureCode,
+    failureCode:
+      fallback.outcome === "fallback" ? lastFailureCode : fallback.failureCode,
   };
 }

@@ -21,9 +21,10 @@ proposed test.
    not enter the prompt; file text is available only through bounded tool
    results.
 3. **Bounded Pi run.** One `PlanningRuntime` is built from the pinned SDK
-   catalog with `temperature: 0`, a clamped response-token limit, and the
-   provider credential resolved inside Pi. The orchestrator never receives a
-   provider API key.
+   catalog — or, when an admin configures a custom OpenAI-compatible base URL,
+   from a registered custom provider — with `temperature: 0`, a clamped
+   response-token limit, and the provider credential resolved inside Pi. The
+   orchestrator never receives a provider API key.
 4. **Typed tools.** The model can only call the read-only inspection, discovery,
    catalog, and plan validation/proposal tools listed below.
 5. **Server validation.** `validateCandidatePlan` applies the versioned v1 JSON
@@ -193,6 +194,35 @@ PROBE_FORGE_PLANNING_MAX_LOAD_SCENARIOS
 Set provider and model together or leave both unset. Provider API keys are
 resolved by the Pi SDK from the provider environment and must never be placed in
 `.env.example`, prompts, logs, traces, plans, or source control.
+
+### Custom OpenAI-compatible providers
+
+An admin can point the planner at any OpenAI-compatible endpoint from the
+dashboard instead of a pinned SDK catalog provider. The "Planning (Pi)" section
+of the admin view stores:
+
+- **Provider** — an arbitrary lowercase id (for example `nebius`). It is used as
+  the registered custom provider id.
+- **Base URL** — an HTTPS endpoint such as `https://api.studio.nebius.com/v1`.
+  When set, this config takes precedence over a built-in provider of the same id
+  and the model id is passed through unchanged.
+- **Context window** and **Max output tokens** — optional model metadata. They
+  default to 32768 and 4096 when blank; the output budget must fit inside the
+  context window.
+- **Provider API key** — the same encrypted, write-only secret used for built-in
+  providers.
+
+The base URL is validated twice: at save time (`services/api/src/admin.rs`) and
+again at run time (`services/analysis-worker/src/agent/model.ts`). Both require
+HTTPS and reject loopback, private, link-local, reserved, and cloud-metadata
+hosts. DNS-rebinding is mitigated best-effort only, because the Pi SDK performs
+the actual fetch. The endpoint must support tool calling; `openai-completions` is
+the only wire protocol exposed.
+
+Set provider and model together; leave the base URL empty to use the pinned
+catalog. Provider API keys are resolved by the Pi SDK or supplied from the
+admin-stored secret and must never be placed in `.env.example`, prompts, logs,
+traces, plans, or source control.
 
 The Phase 7 worker HTTP server remains health-only. The planning library is
 ready for the authenticated claim/dispatch integration; it is not an

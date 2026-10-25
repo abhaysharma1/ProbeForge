@@ -446,6 +446,69 @@ export function cancelJob(jobId: string, csrfToken: string): Promise<Job> {
   return unsafeRequest<Job>("POST", `/jobs/${jobId}/cancel`, csrfToken);
 }
 
+export function rerunJob(jobId: string, csrfToken: string): Promise<Job> {
+  return unsafeRequest<Job>("POST", `/jobs/${jobId}/rerun`, csrfToken);
+}
+
+/**
+ * Event stream path for a job. `EventSource` sends the session cookie on this
+ * same-origin GET and replays from `Last-Event-ID` automatically on reconnect,
+ * so no cursor bookkeeping is required on the client.
+ */
+export function jobEventsUrl(jobId: string): string {
+  return `${API_BASE}/jobs/${encodeURIComponent(jobId)}/events`;
+}
+
+export type Repository = {
+  readonly id: string;
+  readonly projectId: string;
+  readonly provider: string;
+  readonly repositoryUrl: string;
+  readonly defaultReference: string;
+  readonly displayName: string | null;
+  readonly jobCount: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+};
+
+export interface RegisterRepositoryInput {
+  readonly repositoryUrl: string;
+  readonly reference: string;
+  readonly displayName?: string;
+}
+
+export function listRepositories(projectId: string): Promise<Repository[]> {
+  return request<Repository[]>(`/projects/${projectId}/repositories`);
+}
+
+export function registerRepository(
+  projectId: string,
+  input: RegisterRepositoryInput,
+  csrfToken: string,
+): Promise<Repository> {
+  return unsafeRequest<Repository>("POST", `/projects/${projectId}/repositories`, csrfToken, {
+    repositoryUrl: input.repositoryUrl,
+    reference: input.reference,
+    ...(input.displayName ? { displayName: input.displayName } : {}),
+  });
+}
+
+export function removeRepository(
+  projectId: string,
+  repositoryId: string,
+  csrfToken: string,
+): Promise<void> {
+  return unsafeRequest<void>(
+    "DELETE",
+    `/projects/${projectId}/repositories/${repositoryId}`,
+    csrfToken,
+  );
+}
+
+export function canRemoveRepository(role: ProjectRole): boolean {
+  return role === "owner" || role === "admin";
+}
+
 export type TargetEnvironment = "local" | "staging" | "production";
 
 export interface Target {
@@ -573,6 +636,9 @@ export function cancelRun(runId: string, csrfToken: string): Promise<RunRef> {
 export interface PlanningSettings {
   readonly provider: string | null;
   readonly model: string | null;
+  readonly baseUrl: string | null;
+  readonly contextWindow: number | null;
+  readonly maxOutputTokens: number | null;
   readonly limits: Record<string, number>;
   readonly apiKeyConfigured: boolean;
   readonly apiKeyHint: string | null;
@@ -603,6 +669,9 @@ export interface AdminSettings {
 export interface UpdateAdminSettingsInput {
   readonly planningProvider: string | null;
   readonly planningModel: string | null;
+  readonly planningBaseUrl: string | null;
+  readonly planningContextWindow: number | null;
+  readonly planningMaxOutputTokens: number | null;
   readonly planningLimits: Record<string, number>;
   readonly apiKey?: string;
   readonly clearApiKey?: boolean;

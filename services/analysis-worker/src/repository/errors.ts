@@ -40,16 +40,27 @@ export type RepositoryIngestErrorCode =
 export class RepositoryIngestError extends Error {
   readonly code: RepositoryIngestErrorCode;
   readonly retryable: boolean;
+  /**
+   * The git subcommand that failed (for example `ls-tree` or `fetch`), when the
+   * failure came from a git invocation. It is a fixed, non-sensitive label and
+   * never includes arguments or remote URLs, so it is safe to log.
+   */
+  readonly operation: string | null;
 
   constructor(
     code: RepositoryIngestErrorCode,
     message: string,
-    options: { readonly cause?: unknown; readonly retryable?: boolean } = {},
+    options: {
+      readonly cause?: unknown;
+      readonly retryable?: boolean;
+      readonly operation?: string;
+    } = {},
   ) {
     super(message, options.cause === undefined ? undefined : { cause: options.cause });
     this.name = "RepositoryIngestError";
     this.code = code;
     this.retryable = options.retryable ?? false;
+    this.operation = options.operation ?? null;
   }
 }
 

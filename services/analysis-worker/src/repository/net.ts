@@ -171,6 +171,21 @@ export function isPrivateOrReservedAddress(address: string): boolean {
   return true;
 }
 
+/**
+ * Synchronous public-host check for a hostname or IP literal. It rejects
+ * internal names and private, loopback, link-local, reserved, or metadata
+ * addresses. It performs no DNS resolution, so a public name that resolves to a
+ * private address is not caught here (matching the best-effort stance of
+ * `assertRemoteHostSafe`).
+ */
+export function isPublicHost(hostname: string): boolean {
+  const normalized = normalizeHostname(hostname);
+  if (normalized.length === 0) return false;
+  if (isInternalHostname(normalized)) return false;
+  if (isIP(normalized) !== 0) return !isPrivateOrReservedAddress(normalized);
+  return true;
+}
+
 export const defaultHostResolver: HostResolver = async (hostname) => {
   const answers = await lookup(hostname, { all: true, verbatim: true });
   return answers.map((answer) => answer.address);

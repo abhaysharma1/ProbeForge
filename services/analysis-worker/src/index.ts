@@ -1,7 +1,7 @@
 import { DEFAULT_PLANNING_LIMITS } from "./agent/limits";
 import { loadConfig } from "./config";
 import { healthResponse, readinessResponse, SERVICE_NAME } from "./health";
-import { processJobOnce } from "./job-loop";
+import { describeError, processJobOnce } from "./job-loop";
 import { createLogger } from "./logging/logger";
 import { type AuditSink, JsonLineAuditSink, MemoryAuditSink } from "./repository/audit";
 
@@ -71,6 +71,9 @@ async function runJobLoop(): Promise<void> {
     } catch (error) {
       logger.warn("job_loop_error", {
         message: error instanceof Error ? error.message : "unexpected error",
+        // [TEMP DEBUG] Surface the full error for loop-level failures such as an
+        // invalid Git URL, which bypasses the job reschedule path.
+        ...describeError(error),
       });
     }
     if (!shuttingDown) {

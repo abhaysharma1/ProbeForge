@@ -45,6 +45,7 @@ If the transaction fails, none of those records exist.
 | `GET` | `/api/jobs/{jobId}` | any project member |
 | `GET` | `/api/projects/{projectId}/jobs` | any project member; latest 100 |
 | `POST` | `/api/jobs/{jobId}/cancel` | owner, admin, collaborator |
+| `POST` | `/api/jobs/{jobId}/rerun` | owner, admin, collaborator |
 | `GET` | `/api/jobs/{jobId}/events` | any project member |
 
 Job DTOs expose the goal, intensity, status, source reference, attempt,
@@ -55,6 +56,26 @@ Cancellation is fenced by the job row lock. It clears the worker and lease,
 writes `job.cancelled`, and writes an audit record. Cancelling an already
 cancelled job is idempotent; failed or expired jobs return `409 job_terminal`.
 A worker heartbeat or completion after cancellation fails the lease check.
+
+### Re-run
+
+`POST /api/jobs/{jobId}/rerun` requeues a terminal job for a fresh attempt. It
+accepts `failed`, `cancelled`, and `expired`; any other status returns
+`409 job_not_requirable`.
+
+The transition is fenced by the job row lock and commits one transaction:
+
+1. Reset `status = 'queued'`, `attempt = 0`, `not_before = now()`.
+2. Clear `worker_id`, `lease_expires_at`, `heartbeat_at`, `last_error_code`.
+3. Clear `current_commit_sha` and `current_plan_id` so the worker re-ingests the
+   reference and proposes a fresh plan instead of resuming a partial result.
+   Prior plans, runs, and evidence are retained.
+4. Append the `job.requeued` event with the previous status and the actor.
+5. Insert the immutable `job.rerun_requested` audit record.
+
+Owner, admin, and collaborator may re-run; a viewer receives `403` and a
+non-member `404`. Re-running restores the full attempt budget (`attempt = 0`), so
+it is distinct from the bounded automatic retries.
 
 ## Queue claims, leases, and fencing
 
@@ -127,6 +148,7 @@ Every transition appends one immutable `job_events` row with a per-job sequence:
 - `job.retry_scheduled`
 - `job.failed`
 - `job.cancelled`
+- `job.requeued`
 - `plan.proposed`
 - `run.started`
 
@@ -180,7 +202,8 @@ range 1-300).
   leases recover, retries back off and terminate, stale workers cannot complete
   or fail after losing a lease, and due runs promote/claim.
 - `services/api/tests/jobs_queue.rs` proves contract validation, project roles,
-  idempotency, cancellation, event ordering, and SSE `Last-Event-ID` replay.
+  idempotency, cancellation, re-run of terminal jobs, event ordering, and SSE
+  `Last-Event-ID` replay.
 - All fixtures are inert repository metadata and local database rows. No Git
   clone, scanner, load generator, or external target is contacted.
 

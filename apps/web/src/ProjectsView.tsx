@@ -1,3 +1,4 @@
+import type { JobEvent } from "@probe-forge/contracts";
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ApiError,
@@ -9,6 +10,7 @@ import {
   canViewAudit,
   createProject,
   type Job,
+  jobEventsUrl,
   listAudit,
   listJobs,
   listMembers,
@@ -18,11 +20,14 @@ import {
   type ProjectMember,
   type ProjectRole,
   type RunSummaryEntry,
+  rerunJob,
 } from "./api";
-import { ConnectRepository } from "./ConnectRepository";
+import { isLiveJob, jobStatusForEvent } from "./jobEvents";
 import { PlanReview } from "./PlanReview";
+import { RepositoriesPanel } from "./RepositoriesPanel";
 import { RunReport } from "./RunReport";
 import { TargetsPanel } from "./TargetsPanel";
+import { useJobEvents } from "./useJobEvents";
 
 interface ProjectsViewProps {
   readonly user: AuthUser;
@@ -58,6 +63,9 @@ const ACTION_LABELS: Record<string, string> = {
   "target.validation_failed": "Rejected target destination",
   "target.authorization_created": "Authorized target",
   "target.authorization_revoked": "Revoked target authorization",
+  "repository.registered": "Added repository",
+  "repository.removed": "Removed repository",
+  "job.rerun_requested": "Re-ran analysis job",
 };
 
 const JOB_GOAL_LABELS: Record<Job["goal"], string> = {
@@ -145,6 +153,9 @@ export function ProjectsView({
   const [jobsLoading, setJobsLoading] = useState(false);
   const [jobsError, setJobsError] = useState<string | null>(null);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
+  const [rerunningId, setRerunningId] = useState<string | null>(null);
+  const [jobActionError, setJobActionError] = useState<string | null>(null);
+  const [jobStreamError, setJobStreamError] = useState<string | null>(null);
 
   const [runs, setRuns] = useState<RunSummaryEntry[]>([]);
   const [runsLoading, setRunsLoading] = useState(false);
@@ -305,6 +316,89 @@ export function ProjectsView({
     [handleError],
   );
 
+  // Live job progress. While a selected project has jobs the worker can still
+  // move, subscribe to each job's SSE stream and re-read the job list whenever
+  // an event implies a status the UI does not already show. PostgreSQL remains
+  // authoritative; the stream is only a prompt to refresh.
+  const jobsRef = useRef<Job[]>([]);
+  useEffect(() => {
+    jobsRef.current = jobs;
+  }, [jobs]);
+
+  const activeJobIds = useMemo(
+    () => jobs.filter((job) => isLiveJob(job.status)).map((job) => job.id),
+    [jobs],
+  );
+
+  const refreshJobs = useCallback(async () => {
+    const projectId = selectedProjectId;
+    if (!projectId) {
+      return;
+    }
+    const generation = detailGeneration.current;
+    try {
+      const next = await listJobs(projectId);
+      if (generation === detailGeneration.current) {
+        setJobs(next);
+        setJobsError(null);
+      }
+    } catch (error) {
+      if (generation !== detailGeneration.current) {
+        return;
+      }
+      const message = handleError(error);
+      if (message) {
+        setJobsError(message);
+      }
+    }
+  }, [selectedProjectId, handleError]);
+
+  // Coalesce bursts of events into at most one in-flight refresh.
+  const refreshState = useRef({ inFlight: false, pending: false });
+  const requestJobsRefresh = useCallback(() => {
+    const state = refreshState.current;
+    if (state.inFlight) {
+      state.pending = true;
+      return;
+    }
+    state.inFlight = true;
+    void refreshJobs().finally(() => {
+      state.inFlight = false;
+      if (state.pending) {
+        state.pending = false;
+        requestJobsRefresh();
+      }
+    });
+  }, [refreshJobs]);
+
+  const handleJobEvent = useCallback(
+    (jobId: string, event: JobEvent) => {
+      const nextStatus = jobStatusForEvent(event.type);
+      if (nextStatus === null) {
+        return;
+      }
+      const current = jobsRef.current.find((job) => job.id === jobId);
+      if (current && current.status === nextStatus) {
+        return;
+      }
+      setJobStreamError(null);
+      requestJobsRefresh();
+    },
+    [requestJobsRefresh],
+  );
+
+  const handleJobStreamError = useCallback(() => {
+    setJobStreamError("Live updates paused. Reopen the project to refresh status.");
+  }, []);
+
+  useJobEvents({
+    jobIds: activeJobIds,
+    enabled: selectedProjectId !== null && selectedRole !== null,
+    urlForJob: jobEventsUrl,
+    onEvent: handleJobEvent,
+    onStreamError: handleJobStreamError,
+  });
+
   useEffect(() => {
     let cancelled = false;
     async function load() {
@@ -340,6 +434,9 @@ export function ProjectsView({
   useEffect(() => {
     setSelectedJob(null);
     setSelectedRunId(null);
+    setJobActionError(null);
+    setJobStreamError(null);
+    setRerunningId(null);
     if (!selectedProjectId || !selectedRole) {
       detailGeneration.current += 1;
       setMembers([]);
@@ -409,6 +506,24 @@ export function ProjectsView({
       }
     } finally {
       setAddingMember(false);
+    }
+  }
+
+  async function handleRerunJob(job: Job) {
+    setRerunningId(job.id);
+    setJobActionError(null);
+    try {
+      await rerunJob(job.id, csrfToken);
+      if (selected) {
+        await loadDetails(selected.id, selected.role);
+      }
+    } catch (error) {
+      const message = handleError(error);
+      if (message) {
+        setJobActionError(message);
+      }
+    } finally {
+      setRerunningId(null);
     }
   }
 
@@ -767,11 +882,11 @@ export function ProjectsView({
                         </dl>
                       </div>
 
-                      <ConnectRepository
+                      <RepositoriesPanel
                         projectId={selected.id}
                         csrfToken={csrfToken}
-                        canWrite={selected.role !== "viewer"}
-                        onCreated={() => {
+                        role={selected.role}
+                        onJobsChanged={() => {
                           void loadDetails(selected.id, selected.role);
                         }}
                         onSessionExpired={onSessionExpired}
@@ -785,8 +900,19 @@ export function ProjectsView({
                           <h3 id="jobs-heading" className="text-[13px] font-semibold">
                             Analysis jobs
                           </h3>
-                          <span className="text-[11px] text-pf-text-muted">
-                            {jobs.length} {jobs.length === 1 ? "job" : "jobs"}
+                          <span className="flex items-center gap-2 text-[11px] text-pf-text-muted">
+                            {activeJobIds.length > 0 && !jobStreamError ? (
+                              <span className="inline-flex items-center gap-1.5">
+                                <span
+                                  aria-hidden="true"
+                                  className="size-1.5 rounded-full bg-pf-accent"
+                                />
+                                Live updates
+                              </span>
+                            ) : null}
+                            <span>
+                              {jobs.length} {jobs.length === 1 ? "job" : "jobs"}
+                            </span>
                           </span>
                         </div>
                         {jobsLoading ? (
@@ -806,8 +932,15 @@ export function ProjectsView({
                           <ul className="mt-3 divide-y divide-pf-border">
                             {jobs.map((job) => {
                               const hasPlan = job.currentPlanId !== null;
+                              const canRerun =
+                                job.status === "failed" ||
+                                job.status === "cancelled" ||
+                                job.status === "expired";
                               return (
-                                <li key={job.id}>
+                                <li
+                                  key={job.id}
+                                  className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5"
+                                >
                                   <button
                                     type="button"
                                     disabled={!hasPlan}
@@ -815,7 +948,7 @@ export function ProjectsView({
                                       setSelectedRunId(null);
                                       setSelectedJob(job);
                                     }}
-                                    className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 py-2.5 text-left transition-colors hover:bg-pf-surface-hover disabled:cursor-default disabled:hover:bg-transparent"
+                                    className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-left transition-colors hover:bg-pf-surface-hover disabled:cursor-default disabled:hover:bg-transparent"
                                   >
                                     <span className="min-w-0 flex-1">
                                       <span className="block truncate text-[12px] font-medium">
@@ -834,11 +967,31 @@ export function ProjectsView({
                                       {hasPlan ? "Review plan →" : "No plan yet"}
                                     </span>
                                   </button>
+                                  {canRerun && selected.role !== "viewer" ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => void handleRerunJob(job)}
+                                      disabled={rerunningId === job.id}
+                                      className="shrink-0 rounded-md border border-pf-border-strong bg-pf-surface px-2.5 py-1 text-[10px] font-medium text-pf-text-secondary transition-colors hover:border-pf-text-muted disabled:opacity-55"
+                                    >
+                                      {rerunningId === job.id ? "Re-running..." : "Re-run"}
+                                    </button>
+                                  ) : null}
                                 </li>
                               );
                             })}
                           </ul>
                         )}
+                        {jobActionError ? (
+                          <p role="alert" className="mt-2 text-[11px] text-pf-error">
+                            {jobActionError}
+                          </p>
+                        ) : null}
+                        {jobStreamError ? (
+                          <p role="status" className="mt-2 text-[11px] text-pf-warning">
+                            {jobStreamError}
+                          </p>
+                        ) : null}
                       </section>
 
                       <section

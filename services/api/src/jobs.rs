@@ -38,6 +38,7 @@ pub fn routes() -> Router<AppState> {
         .route("/jobs", post(create_job))
         .route("/jobs/{job_id}", get(get_job))
         .route("/jobs/{job_id}/cancel", post(cancel_job))
+        .route("/jobs/{job_id}/rerun", post(rerun_job))
         .route("/jobs/{job_id}/events", get(job_events))
         .route("/projects/{project_id}/jobs", get(list_jobs))
 }
@@ -420,6 +421,106 @@ async fn cancel_job(
     Ok(Json(job_from_row(row)?))
 }
 
+/// Requeue a terminal job (failed, cancelled, or expired) for a fresh attempt.
+/// Manual re-runs are operator-initiated, so the transition lives here with the
+/// cancel path rather than in the worker-driven `probe_forge_queue` crate. The
+/// status update, append-only event, and audit row commit in one transaction.
+async fn rerun_job(
+    State(state): State<AppState>,
+    Extension(context): Extension<AuthContext>,
+    ApiPath(job_id): ApiPath<Uuid>,
+) -> Result<Json<JobDto>, ApiError> {
+    let (job, role) = load_job_for_user(&state.pool, context.user.id, job_id).await?;
+    if !role.can_create_jobs() {
+        tracing::warn!(
+            event = "job.rerun_forbidden",
+            job_id = %job_id,
+            user_id = %context.user.id,
+            "job rerun denied: insufficient project role"
+        );
+        return Err(ApiError::forbidden(
+            "forbidden",
+            "You do not have permission to re-run jobs in this project.",
+        ));
+    }
+
+    let mut transaction = state.pool.begin().await.map_err(ApiError::database)?;
+    let current_status: Option<String> =
+        sqlx::query_scalar("SELECT status FROM jobs WHERE id = $1 AND project_id = $2 FOR UPDATE")
+            .bind(job_id)
+            .bind(job.project_id)
+            .fetch_optional(&mut *transaction)
+            .await
+            .map_err(ApiError::database)?;
+
+    let Some(current_status) = current_status else {
+        return Err(ApiError::not_found("job_not_found", "Job not found."));
+    };
+
+    if !matches!(current_status.as_str(), "failed" | "cancelled" | "expired") {
+        return Err(ApiError::conflict(
+            "job_not_requirable",
+            "Only a failed, cancelled, or expired job can be re-run.",
+        ));
+    }
+
+    // Reset the attempt budget and every lease/fencing field. Clearing the pinned
+    // commit and plan makes the worker re-ingest the reference and propose a fresh
+    // plan instead of resuming a partial result. Prior plans and runs are retained.
+    sqlx::query(
+        r#"
+        UPDATE jobs
+        SET status = 'queued',
+            attempt = 0,
+            not_before = now(),
+            worker_id = NULL,
+            lease_expires_at = NULL,
+            heartbeat_at = NULL,
+            last_error_code = NULL,
+            current_commit_sha = NULL,
+            current_plan_id = NULL
+        WHERE id = $1
+        "#,
+    )
+    .bind(job_id)
+    .execute(&mut *transaction)
+    .await
+    .map_err(ApiError::database)?;
+
+    append_job_event(
+        &mut transaction,
+        job_id,
+        "job.requeued",
+        json!({ "previousStatus": current_status, "rerunBy": context.user.id }),
+    )
+    .await
+    .map_err(queue_error)?;
+
+    audit::record_in_tx(
+        &mut transaction,
+        Some(job.project_id),
+        Some(context.user.id),
+        "job.rerun_requested",
+        "job",
+        Some(job_id),
+        json!({ "goal": job.goal, "previousStatus": current_status }),
+    )
+    .await
+    .map_err(ApiError::database)?;
+
+    let row = load_job_row(&mut transaction, context.user.id, job_id).await?;
+    transaction.commit().await.map_err(ApiError::database)?;
+    tracing::info!(
+        event = "job.requeued",
+        job_id = %job_id,
+        project_id = %job.project_id,
+        user_id = %context.user.id,
+        previous_status = %current_status,
+        "job requeued for a fresh attempt"
+    );
+    Ok(Json(job_from_row(row)?))
+}
+
 async fn job_events(
     State(state): State<AppState>,
     Extension(context): Extension<AuthContext>,
@@ -616,6 +717,7 @@ async fn upsert_git_source(
         DO UPDATE SET
             default_reference = EXCLUDED.default_reference,
             credential_ref = COALESCE(EXCLUDED.credential_ref, git_sources.credential_ref),
+            archived_at = NULL,
             updated_at = now()
         RETURNING id
         "#,
@@ -631,7 +733,7 @@ async fn upsert_git_source(
     Ok(source_id)
 }
 
-fn provider_for(repository_url: &str) -> Result<&'static str, ApiError> {
+pub(crate) fn provider_for(repository_url: &str) -> Result<&'static str, ApiError> {
     let parsed = Url::parse(repository_url)
         .map_err(|_| ApiError::invalid("invalid_repository_url", "Repository URL is not valid."))?;
     let host = parsed.host_str().unwrap_or_default().to_ascii_lowercase();

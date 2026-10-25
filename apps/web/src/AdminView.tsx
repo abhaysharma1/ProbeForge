@@ -19,6 +19,9 @@ interface AdminViewProps {
 interface Form {
   provider: string;
   model: string;
+  baseUrl: string;
+  contextWindow: string;
+  maxOutputTokens: string;
   maxModelCalls: string;
   maxTurns: string;
   maxResponseTokens: string;
@@ -55,6 +58,11 @@ function toForm(settings: AdminSettings): Form {
   return {
     provider: settings.planning.provider ?? "",
     model: settings.planning.model ?? "",
+    baseUrl: settings.planning.baseUrl ?? "",
+    contextWindow:
+      settings.planning.contextWindow === null ? "" : String(settings.planning.contextWindow),
+    maxOutputTokens:
+      settings.planning.maxOutputTokens === null ? "" : String(settings.planning.maxOutputTokens),
     maxModelCalls: String(limits.maxModelCalls ?? ""),
     maxTurns: String(limits.maxTurns ?? ""),
     maxResponseTokens: String(limits.maxResponseTokens ?? ""),
@@ -203,6 +211,11 @@ export function AdminView({
         {
           planningProvider: form.provider.trim() === "" ? null : form.provider.trim(),
           planningModel: form.model.trim() === "" ? null : form.model.trim(),
+          planningBaseUrl: form.baseUrl.trim() === "" ? null : form.baseUrl.trim(),
+          planningContextWindow:
+            form.contextWindow.trim() === "" ? null : numberOr(form.contextWindow, 32768),
+          planningMaxOutputTokens:
+            form.maxOutputTokens.trim() === "" ? null : numberOr(form.maxOutputTokens, 4096),
           planningLimits,
           ...(form.apiKey.trim() === "" ? {} : { apiKey: form.apiKey.trim() }),
           apiRequestsPerMinute: numberOr(form.apiRequestsPerMinute, 240),
@@ -311,8 +324,9 @@ export function AdminView({
           <section className="rounded-lg border border-pf-border bg-pf-surface px-5 py-4">
             <h2 className="text-[14px] font-semibold">Planning (Pi)</h2>
             <p className="mt-1 text-[12px] text-pf-text-secondary">
-              Provider and model are validated against the pinned SDK catalog when a job runs. With
-              none set, the deterministic fallback planner is used.
+              Without a base URL, the provider and model are validated against the pinned SDK
+              catalog when a job runs. With a base URL, the endpoint is registered as a custom
+              OpenAI-compatible provider. With none set, the deterministic fallback planner is used.
             </p>
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
               <Field
@@ -331,6 +345,38 @@ export function AdminView({
                 placeholder="claude-sonnet-4-6"
                 onChange={(value) => update("model", value)}
               />
+            </div>
+            <div className="mt-4 border-t border-pf-border pt-4">
+              <Field
+                id="planning-base-url"
+                label="Base URL (custom OpenAI-compatible endpoint)"
+                type="url"
+                value={form.baseUrl}
+                placeholder="https://api.example.com/v1"
+                onChange={(value) => update("baseUrl", value)}
+              />
+              <p className="mt-1.5 text-[11px] text-pf-text-muted">
+                Leave empty to use a pinned Pi SDK provider. When set, the worker registers this
+                HTTPS endpoint as a custom OpenAI-compatible provider for the given provider id; it
+                takes precedence over a built-in provider of the same id. Internal and metadata
+                hosts are rejected.
+              </p>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <Field
+                  id="planning-context-window"
+                  label="Context window (tokens)"
+                  value={form.contextWindow}
+                  placeholder="32768"
+                  onChange={(value) => update("contextWindow", value)}
+                />
+                <Field
+                  id="planning-max-output-tokens"
+                  label="Max output tokens"
+                  value={form.maxOutputTokens}
+                  placeholder="4096"
+                  onChange={(value) => update("maxOutputTokens", value)}
+                />
+              </div>
             </div>
             <div className="mt-4 grid gap-4 sm:grid-cols-3">
               {LIMIT_FIELDS.map((field) => (

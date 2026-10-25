@@ -220,10 +220,10 @@ export function createLogger(options: LoggerOptions): Logger {
   function emit(event: string, recordLevel: LogLevel, output: LogFields): void {
     if (LEVEL_RANK[recordLevel] < threshold) return;
     const record = redactValue({
+      ...output,
       level: recordLevel,
       time: now().toISOString(),
       service: options.service,
-      ...output,
       event,
     }) as LogRecord;
     sink(format === "json" ? JSON.stringify(record) : renderText(record));

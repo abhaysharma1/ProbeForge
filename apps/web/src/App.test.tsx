@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import type { Job, JobPlan } from "./api";
@@ -40,6 +40,18 @@ const JOB: Job = {
   currentPlanId: "66666666-6666-4666-8666-666666666666",
   createdAt: "2026-10-21T10:00:00Z",
   updatedAt: "2026-10-21T10:05:00Z",
+};
+
+const REPOSITORY = {
+  id: "abababab-abab-4bab-8bab-abababababab",
+  projectId: PROJECT.id,
+  provider: "github",
+  repositoryUrl: "https://github.com/owner/repo",
+  defaultReference: "main",
+  displayName: null,
+  jobCount: 0,
+  createdAt: "2026-10-21T10:00:00Z",
+  updatedAt: "2026-10-21T10:00:00Z",
 };
 
 const PLAN: JobPlan = {
@@ -376,26 +388,90 @@ function mockResponse(body: unknown, status = 200) {
   } as Response;
 }
 
+class FakeEventSource {
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSED = 2;
+  static instances: FakeEventSource[] = [];
+
+  readonly url: string;
+  readyState = FakeEventSource.OPEN;
+  closed = false;
+  onopen: ((event: Event) => void) | null = null;
+  onmessage: ((event: MessageEvent<string>) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
+  private readonly listeners = new Map<string, Set<EventListener>>();
+
+  constructor(url: string) {
+    this.url = url;
+    FakeEventSource.instances.push(this);
+  }
+
+  addEventListener(type: string, listener: EventListener): void {
+    let set = this.listeners.get(type);
+    if (set === undefined) {
+      set = new Set();
+      this.listeners.set(type, set);
+    }
+    set.add(listener);
+  }
+
+  removeEventListener(type: string, listener: EventListener): void {
+    this.listeners.get(type)?.delete(listener);
+  }
+
+  close(): void {
+    this.closed = true;
+    this.readyState = FakeEventSource.CLOSED;
+  }
+
+  /** Test helper: dispatch a named SSE event with a JSON envelope payload. */
+  emit(type: string, data: unknown): void {
+    const event = new MessageEvent(type, { data: JSON.stringify(data) });
+    for (const listener of this.listeners.get(type) ?? []) {
+      listener(event);
+    }
+  }
+
+  /** Test helper: dispatch an unnamed event (e.g. `stream.error`). */
+  emitMessage(data: unknown): void {
+    this.onmessage?.(new MessageEvent("message", { data: JSON.stringify(data) }));
+  }
+
+  fail(): void {
+    this.readyState = FakeEventSource.CONNECTING;
+    this.onerror?.(new Event("error"));
+  }
+}
+
 interface FetchOptions {
   readonly session: boolean;
   readonly loginStatus?: number;
   readonly projects?: readonly unknown[];
   readonly role?: "owner" | "admin" | "collaborator" | "viewer";
   readonly jobs?: readonly Job[];
+  readonly jobsBox?: { jobs: Job[] };
   readonly plan?: JobPlan;
   readonly planPatchStatus?: number;
   readonly planApproveStatus?: number;
   readonly runs?: readonly unknown[];
   readonly runDetail?: unknown;
   readonly targets?: readonly unknown[];
+  readonly repositories?: readonly unknown[];
+  readonly registeredRepository?: unknown;
   readonly createdJob?: unknown;
   readonly createJobStatus?: number;
+  readonly rerunStatus?: number;
   readonly admin?: boolean;
   readonly adminSettings?: unknown;
 }
 
 function installFetch(options: FetchOptions) {
   let currentPlan = options.plan ? (JSON.parse(JSON.stringify(options.plan)) as JobPlan) : null;
+  let repositories = (options.repositories ?? []).map(
+    (repository) => ({ ...(repository as Record<string, unknown>) }) as Record<string, unknown>,
+  );
+  let jobs = (options.jobs ?? []).map((job) => ({ ...job }) as Job);
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
@@ -441,7 +517,26 @@ function installFetch(options: FetchOptions) {
     }
 
     if (url.includes("/api/projects/") && url.endsWith("/jobs") && method === "GET") {
-      return mockResponse(options.jobs ?? []);
+      return mockResponse(options.jobsBox ? options.jobsBox.jobs : jobs);
+    }
+
+    if (url.includes("/api/projects/") && url.endsWith("/repositories") && method === "GET") {
+      return mockResponse(repositories);
+    }
+
+    if (url.includes("/api/projects/") && url.endsWith("/repositories") && method === "POST") {
+      const created = {
+        ...(REPOSITORY as Record<string, unknown>),
+        ...((options.registeredRepository as Record<string, unknown>) ?? {}),
+      };
+      repositories = [...repositories, created];
+      return mockResponse(created, 201);
+    }
+
+    if (url.includes("/api/projects/") && url.includes("/repositories/") && method === "DELETE") {
+      const id = url.split("/repositories/")[1];
+      repositories = repositories.filter((repository) => repository.id !== id);
+      return mockResponse(null, 204);
     }
 
     if (url.includes("/api/projects/") && url.endsWith("/runs") && method === "GET") {
@@ -538,6 +633,23 @@ function installFetch(options: FetchOptions) {
       return mockResponse(options.targets ?? []);
     }
 
+    if (url.includes("/jobs/") && url.endsWith("/rerun") && method === "POST") {
+      if (options.rerunStatus && options.rerunStatus >= 400) {
+        return mockResponse(
+          {
+            error: {
+              code: "job_not_requirable",
+              message: "Only a failed, cancelled, or expired job can be re-run.",
+            },
+          },
+          options.rerunStatus,
+        );
+      }
+      const id = url.split("/jobs/")[1]?.replace("/rerun", "");
+      jobs = jobs.map((job) => (job.id === id ? ({ ...job, status: "queued" } as Job) : job));
+      return mockResponse(jobs.find((job) => job.id === id) ?? JOB);
+    }
+
     if (url.includes("/api/jobs?") && method === "POST") {
       if (options.createJobStatus && options.createJobStatus >= 400) {
         return mockResponse(
@@ -598,6 +710,8 @@ async function signIn() {
 describe("App", () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
+    FakeEventSource.instances = [];
+    vi.stubGlobal("EventSource", FakeEventSource);
   });
 
   afterEach(() => {
@@ -653,6 +767,103 @@ describe("App", () => {
     ).toBeInTheDocument();
     expect(screen.queryByLabelText("Member email")).not.toBeInTheDocument();
     expect(screen.queryByText("Audit trail")).not.toBeInTheDocument();
+  });
+
+  it("subscribes to a queued job's stream and reflects worker progress", async () => {
+    const queued: Job = { ...JOB, status: "queued", currentPlanId: null };
+    const jobsBox = { jobs: [queued] as Job[] };
+    await renderSignedIn({ session: true, projects: [PROJECT], jobsBox });
+
+    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
+
+    expect(await screen.findByText(/· Queued$/)).toBeInTheDocument();
+
+    // A stream was opened for the live job; the app never polls a status endpoint.
+    await waitFor(() => {
+      expect(
+        FakeEventSource.instances.some((instance) =>
+          instance.url.endsWith(`/api/jobs/${queued.id}/events`),
+        ),
+      ).toBe(true);
+    });
+    const stream = FakeEventSource.instances.find((instance) =>
+      instance.url.endsWith(`/api/jobs/${queued.id}/events`),
+    );
+
+    // A replayed event that matches the known status does not trigger a refetch.
+    act(() => {
+      stream?.emit("job.queued", {
+        schemaVersion: "1",
+        jobId: queued.id,
+        sequence: 1,
+        type: "job.queued",
+        occurredAt: "2026-10-21T10:00:00Z",
+        payload: {},
+      });
+    });
+
+    // The worker claim moves the job to analyzing; the list re-reads and updates.
+    jobsBox.jobs = [{ ...queued, status: "analyzing" }];
+    act(() => {
+      stream?.emit("job.claimed", {
+        schemaVersion: "1",
+        jobId: queued.id,
+        sequence: 2,
+        type: "job.claimed",
+        occurredAt: "2026-10-21T10:01:00Z",
+        payload: { workerId: "worker-1", attempt: 1 },
+      });
+    });
+
+    expect(await screen.findByText(/· Analyzing$/)).toBeInTheDocument();
+    expect(stream?.closed).toBe(false);
+
+    // The proposal moves the job to a non-live state, so the stream closes.
+    jobsBox.jobs = [{ ...queued, status: "awaiting_approval", currentPlanId: JOB.currentPlanId }];
+    act(() => {
+      stream?.emit("plan.proposed", {
+        schemaVersion: "1",
+        jobId: queued.id,
+        sequence: 3,
+        type: "plan.proposed",
+        occurredAt: "2026-10-21T10:02:00Z",
+        payload: { planId: JOB.currentPlanId },
+      });
+    });
+
+    expect(await screen.findByText(/· Awaiting approval$/)).toBeInTheDocument();
+    expect(stream?.closed).toBe(true);
+  });
+
+  it("shows a notice when a live job stream stops responding", async () => {
+    const queued: Job = { ...JOB, status: "queued", currentPlanId: null };
+    await renderSignedIn({ session: true, projects: [PROJECT], jobs: [queued] });
+
+    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
+    expect(await screen.findByText(/· Queued$/)).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(
+        FakeEventSource.instances.some((instance) =>
+          instance.url.endsWith(`/api/jobs/${queued.id}/events`),
+        ),
+      ).toBe(true);
+    });
+    const stream = FakeEventSource.instances.find((instance) =>
+      instance.url.endsWith(`/api/jobs/${queued.id}/events`),
+    );
+
+    // Five consecutive transport failures close the stream and surface a notice.
+    act(() => {
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        stream?.fail();
+      }
+    });
+
+    expect(
+      await screen.findByText("Live updates paused. Reopen the project to refresh status."),
+    ).toBeInTheDocument();
+    expect(stream?.closed).toBe(true);
   });
 
   it("reviews a plan, saves the selection, and records an immutable approval", async () => {
@@ -732,11 +943,12 @@ describe("App", () => {
     expect(screen.getByText("https://inert.example.test")).toBeInTheDocument();
   });
 
-  it("connects a public repository and reports queued analysis", async () => {
+  it("adds a repository, then starts an analysis for it", async () => {
     await renderSignedIn({
       session: true,
       projects: [PROJECT],
       targets: [],
+      repositories: [],
       createdJob: JOB,
     });
 
@@ -744,12 +956,51 @@ describe("App", () => {
 
     const repoInput = await screen.findByLabelText("Repository URL");
     fireEvent.change(repoInput, { target: { value: "https://github.com/owner/repo" } });
-    fireEvent.click(screen.getByRole("button", { name: "Connect repository" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add repository" }));
 
-    expect(await screen.findByText(/Connected "Payments plan review"/)).toBeInTheDocument();
+    expect(await screen.findByText(/Added "repo"/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Start analysis" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start analysis" }));
+
+    expect(await screen.findByText(/Started "Payments plan review"/)).toBeInTheDocument();
   });
 
-  it("rejects a non-public repository URL before submitting", async () => {
+  it("removes an attached repository and keeps analysis history", async () => {
+    await renderSignedIn({
+      session: true,
+      projects: [PROJECT],
+      targets: [],
+      repositories: [REPOSITORY],
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
+
+    expect(await screen.findByText("https://github.com/owner/repo")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm remove" }));
+
+    expect(await screen.findByText(/Removed "repo"/)).toBeInTheDocument();
+    expect(screen.queryByText("https://github.com/owner/repo")).not.toBeInTheDocument();
+  });
+
+  it("re-runs a terminal analysis job", async () => {
+    await renderSignedIn({
+      session: true,
+      projects: [PROJECT],
+      targets: [],
+      jobs: [{ ...JOB, status: "failed", currentPlanId: null }],
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Re-run" }));
+
+    expect(await screen.findByText(/Queued/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Re-run" })).not.toBeInTheDocument();
+  });
+
+  it("rejects a non-public repository URL before adding", async () => {
     await renderSignedIn({ session: true, projects: [PROJECT], targets: [] });
 
     fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
@@ -759,7 +1010,7 @@ describe("App", () => {
     expect(
       await screen.findByText(/Only public HTTPS repository URLs are supported/),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Connect repository" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add repository" })).toBeDisabled();
   });
 
   it("shows a reload action when a concurrent edit conflicts", async () => {

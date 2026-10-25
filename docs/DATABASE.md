@@ -27,7 +27,7 @@ string. The test runner sets `PROBE_FORGE_REQUIRE_DB_TESTS=1`, so a missing
 Migrations live in `migrations/` and are applied by
 `cargo run -p probe-forge-api --bin migrate`, which uses SQLx's runtime migrator.
 
-- **Forward-only.** Migrations are ordered (`0001` through `0011` today) and are never
+- **Forward-only.** Migrations are ordered (`0001` through `0017` today) and are never
   edited after being applied. Fix a mistake with a new migration.
 - **Do not use `sqlx migrate revert` in shared or production environments.** No
   down migrations are maintained. SQLx records applied versions in
@@ -62,6 +62,7 @@ migrator is idempotent because SQLx skips already-applied versions.
 | `0009_approval_run_match.sql` | `plan_approvals`, `test_runs` | Composite approval/plan/version foreign key for run integrity |
 | `0010_target_validation.sql` | `targets` | Verification timestamp, resolved address evidence, and allowed ports |
 | `0011_load_safety.sql` | `load_profiles` | Platform profile maxima and closed stop-condition keys; new/updated rows enforced with `NOT VALID` constraints |
+| `0017_repositories.sql` | `git_sources` | Repository registry: optional `display_name`, `archived_at` removal marker, active-list index |
 
 Every project-scoped table carries `project_id` and cascades from `projects`
 except where a deliberate restriction preserves approval/authorization history.
@@ -115,8 +116,12 @@ constraints above remain the second line of defense.
   before enforcing the constraints on all rows.
 - Job events are append-only and ordered per job. The API emits
   `job.queued`, `job.claimed`, `job.retry_scheduled`, `job.failed`,
-  `job.cancelled`, `plan.proposed`, and `run.started`; SSE replay uses the
-  sequence number as the event ID.
+  `job.cancelled`, `job.requeued`, `plan.proposed`, and `run.started`; SSE replay
+  uses the sequence number as the event ID.
+- `git_sources` is the project repository registry. `display_name` is optional and
+  bounded; `archived_at` marks a removed repository. Removal archives rather than
+  deletes so immutable job history remains referenced, and the
+  `git_sources_display_name_length` check bounds names to 120 characters.
 - `jobs.idempotency_key` is unique per project when present. Reusing a key with
   a different request is rejected by the API before a second row is inserted.
 - `job_events`, `plan_approvals`, `evidence`, and `audit_log` reject updates and
@@ -150,8 +155,12 @@ constraints above remain the second line of defense.
 run against their own isolated schemas. They apply all migrations and exercise
 login/logout, session revocation, CSRF/origin rejection, rate limiting, project
 RBAC, cross-project denial, audit writes, job creation/idempotency/cancellation,
-event ordering, and SSE replay. They never clone a repository, scan a target, or
-contact an external host.
+manual re-run, event ordering, and SSE replay. They never clone a repository,
+scan a target, or contact an external host.
+
+`services/api/tests/repositories.rs` exercises the repository registry against an
+isolated schema: registration, listing, archive-based removal, RBAC, tenant
+isolation, and the `repository_busy` guard.
 
 `crates/queue/tests/queue.rs` uses its own schema to prove concurrent claims,
 lease expiry recovery, bounded retries, fencing, and due-run promotion/claiming.

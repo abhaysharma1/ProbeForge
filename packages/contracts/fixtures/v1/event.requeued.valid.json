@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "1",
+  "jobId": "33333333-3333-4333-8333-333333333333",
+  "sequence": 6,
+  "type": "job.requeued",
+  "occurredAt": "2026-10-23T10:02:00Z",
+  "payload": {
+    "previousStatus": "failed",
+    "rerunBy": "44444444-4444-4444-8444-444444444444"
+  }
+}

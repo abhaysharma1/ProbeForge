@@ -38,6 +38,7 @@ export type JobEventType =
   | "job.retry_scheduled"
   | "job.failed"
   | "job.cancelled"
+  | "job.requeued"
   | "repository.clone.started"
   | "repository.snapshot.ready"
   | "repository.clone.failed"

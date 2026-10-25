@@ -32,6 +32,7 @@ Do not resolve a genuine conflict silently. Choose the safest minimal interpreta
 | [AUTH.md](AUTH.md) | Authentication, sessions, CSRF, project roles, API surface, and security limitations |
 | [JOBS.md](JOBS.md) | Job API, queue claims, leases, fencing, retries, events, SSE replay, and scheduler behavior |
 | [REPOSITORY_INGESTION.md](REPOSITORY_INGESTION.md) | Read-only Git URL policy, secret references, workspace isolation, bounds, snapshots, audit events, and CLI |
+| [REPOSITORIES.md](REPOSITORIES.md) | Project repository registry: registration, archive-based removal, RBAC, and analysis start |
 | [DISCOVERY.md](DISCOVERY.md) | Static application inventory, supported parsers, provenance, ambiguity, limits, and the bounded Pi discovery toolset |
 | [PLANNING.md](PLANNING.md) | Pi planning, tool registry, plan validation, budgets, fallback, versioning, and persistence |
 | [PLAN_APPROVAL.md](PLAN_APPROVAL.md) | Versioned test catalog, plan review APIs, optimistic selection, immutable approvals, and UI behavior |
@@ -60,6 +61,8 @@ Do not resolve a genuine conflict silently. Choose the safest minimal interpreta
 | 11 | [11_load_scenarios_report.md](phases/11_load_scenarios_report.md) |
 | 12 | [12_load_runner_scheduler_report.md](phases/12_load_runner_scheduler_report.md) |
 | 13 | [13_results_reports_report.md](phases/13_results_reports_report.md) |
+| Post | [planning_custom_provider_report.md](phases/planning_custom_provider_report.md) |
+| Post | [repositories_rerun_report.md](phases/repositories_rerun_report.md) |
 
 `docs/frontend_design.md` is an alias that points to the canonical
 [06_frontend_design.md](06_frontend_design.md), because the agent instructions

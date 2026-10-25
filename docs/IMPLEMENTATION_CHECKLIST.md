@@ -139,6 +139,7 @@ Legend: `[x]` done with evidence - `[ ]` not done.
 - [x] Explicitly prohibit package installation, build, tests, application startup, and arbitrary project scripts
 - [x] Add an audit trail for snapshot creation and cleanup
 - [x] Build inert fixture repositories covering supported languages and malformed/oversized files
+- [x] Fetch the pinned commit completely (no partial-clone filter) so tree/size inspection never triggers lazy network fetches (D-045, `docs/phases/05a_ingestion_complete_fetch_report.md`)
 
 **Exit gate**
 
@@ -448,3 +449,20 @@ Legend: `[x]` done with evidence - `[ ]` not done.
 - [x] No real security scan or load test was executed as part of acceptance
 - [x] Documentation describes what is and is not supported
 - [x] Only after this gate may an authorized operator perform a separate, manually approved staging smoke test
+
+## Post-phase enhancements
+
+Changes made after the numbered phases that are tracked by a decision-log entry
+rather than a new phase gate.
+
+- **Custom OpenAI-compatible planning provider** — an admin can point the planner
+  at any HTTPS OpenAI-compatible endpoint from the dashboard; the worker registers
+  a custom provider that takes precedence over the pinned catalog. See
+  [D-044](DECISION_LOG.md) and the [report](phases/planning_custom_provider_report.md).
+- **Project repositories registry** — a project can attach one or more
+  repositories, list them, register without starting analysis, and remove
+  (archive) them. See [D-046](DECISION_LOG.md), [REPOSITORIES.md](REPOSITORIES.md),
+  and the [report](phases/repositories_rerun_report.md).
+- **Re-run terminal jobs** — a failed, cancelled, or expired job can be requeued
+  for a fresh attempt from the API and the project view. See
+  [D-047](DECISION_LOG.md) and the [report](phases/repositories_rerun_report.md).

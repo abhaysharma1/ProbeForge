@@ -23,14 +23,14 @@ export interface PlanningLimits {
 }
 
 export const DEFAULT_PLANNING_LIMITS: PlanningLimits = {
-  maxModelCalls: 6,
-  maxToolCalls: 24,
-  maxTurns: 8,
+  maxModelCalls: 20,
+  maxToolCalls: 100,
+  maxTurns: 20,
   maxRetries: 1,
-  maxResponseTokens: 4_096,
-  maxWallTimeMs: 120_000,
-  maxPromptBytes: 64 * 1024,
-  maxToolOutputBytes: 32 * 1024,
+  maxResponseTokens: 64_000,
+  maxWallTimeMs: 900_000,
+  maxPromptBytes: 256 * 1024,
+  maxToolOutputBytes: 128 * 1024,
   maxTotalToolOutputBytes: 128 * 1024,
   maxPlanBytes: MAX_CONTRACT_BYTES,
   maxRepositoryReadBytes: 8 * 1024,
@@ -38,6 +38,25 @@ export const DEFAULT_PLANNING_LIMITS: PlanningLimits = {
   maxPlannedTests: 20,
   maxLoadScenarios: 5,
 };
+
+// export const DEFAULT_PLANNING_LIMITS: PlanningLimits = {
+//   maxModelCalls: 6,
+//   maxToolCalls: 24,
+//   maxTurns: 8,
+//   maxRetries: 1,
+//   maxResponseTokens: 4_096,
+//   maxWallTimeMs: 120_000,
+//   maxPromptBytes: 64 * 1024,
+//   maxToolOutputBytes: 32 * 1024,
+//   maxTotalToolOutputBytes: 128 * 1024,
+//   maxPlanBytes: MAX_CONTRACT_BYTES,
+//   maxRepositoryReadBytes: 8 * 1024,
+//   maxCatalogEntries: 200,
+//   maxPlannedTests: 20,
+//   maxLoadScenarios: 5,
+// };
+
+
 
 export function validatePlanningLimits(limits: PlanningLimits): void {
   const entries: Array<[keyof PlanningLimits, number, number, number]> = [

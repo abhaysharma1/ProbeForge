@@ -19,6 +19,8 @@ export {
 } from "./limits";
 export {
   assertRuntimeIdentifier,
+  CUSTOM_PROVIDER_DEFAULTS,
+  type CustomOpenAiCompatConfig,
   createPiPlanningRuntime,
   type PlanningRuntime,
 } from "./model";

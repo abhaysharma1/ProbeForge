@@ -71,6 +71,13 @@ impl ProjectRole {
         !matches!(self, Self::Viewer)
     }
 
+    /// Removing a repository archives it, hiding it from the active list and
+    /// blocking new analysis. That is destructive, so only owners and admins may
+    /// do it. Viewers, collaborators, and admins may still register a repository.
+    pub(crate) fn can_manage_repositories(self) -> bool {
+        matches!(self, Self::Owner | Self::Admin)
+    }
+
     /// Per-project quotas bound server resources, so only owners and admins may
     /// change them.
     pub(crate) fn can_manage_quota(self) -> bool {

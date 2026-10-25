@@ -13,7 +13,10 @@ use axum::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use url::Url;
 use uuid::Uuid;
+
+use probe_forge_target_policy::classify_ip;
 
 use crate::{
     AppState, audit,
@@ -70,6 +73,9 @@ struct SettingsDto {
 struct PlanningDto {
     provider: Option<String>,
     model: Option<String>,
+    base_url: Option<String>,
+    context_window: Option<i32>,
+    max_output_tokens: Option<i32>,
     limits: Value,
     api_key_configured: bool,
     api_key_hint: Option<String>,
@@ -104,6 +110,14 @@ struct ProjectDefaultsDto {
 struct UpdateSettingsRequest {
     planning_provider: Option<String>,
     planning_model: Option<String>,
+    /// Custom OpenAI-compatible endpoint. When set, the provider id is an
+    /// arbitrary token and the worker registers a custom provider for it.
+    #[serde(default)]
+    planning_base_url: Option<String>,
+    #[serde(default)]
+    planning_context_window: Option<i32>,
+    #[serde(default)]
+    planning_max_output_tokens: Option<i32>,
     planning_limits: Value,
     /// A new provider API key. Absent or blank leaves the stored key unchanged.
     #[serde(default)]
@@ -141,6 +155,9 @@ fn to_dto(row: &PlatformSettingsRow) -> SettingsDto {
         planning: PlanningDto {
             provider: row.planning_provider.clone(),
             model: row.planning_model.clone(),
+            base_url: row.planning_base_url.clone(),
+            context_window: row.planning_context_window,
+            max_output_tokens: row.planning_max_output_tokens,
             limits: row.planning_limits.clone(),
             api_key_configured: row.planning_api_key_ciphertext.is_some(),
             api_key_hint: row.planning_api_key_hint.clone(),
@@ -200,6 +217,11 @@ async fn update_settings(
         "model",
         IdentifierKind::Model,
     )?;
+    let base_url = normalize_base_url(payload.planning_base_url.as_deref())?;
+    validate_custom_provider(
+        payload.planning_context_window,
+        payload.planning_max_output_tokens,
+    )?;
     validate_planning_limits(&payload.planning_limits)?;
     validate_bounds(&payload)?;
 
@@ -211,21 +233,25 @@ async fn update_settings(
         UPDATE platform_settings SET
             planning_provider = $1,
             planning_model = $2,
-            planning_limits = $3,
-            planning_api_key_ciphertext = $4,
-            planning_api_key_hint = $5,
-            planning_api_key_updated_at = $6,
-            api_requests_per_minute = $7,
-            expensive_requests_per_minute = $8,
-            retention_event_days = $9,
-            retention_report_days = $10,
-            retention_counter_days = $11,
-            default_max_active_runs = $12,
-            default_max_requests_per_window = $13,
-            default_window_seconds = $14,
-            updated_by = $15
+            planning_base_url = $3,
+            planning_context_window = $4,
+            planning_max_output_tokens = $5,
+            planning_limits = $6,
+            planning_api_key_ciphertext = $7,
+            planning_api_key_hint = $8,
+            planning_api_key_updated_at = $9,
+            api_requests_per_minute = $10,
+            expensive_requests_per_minute = $11,
+            retention_event_days = $12,
+            retention_report_days = $13,
+            retention_counter_days = $14,
+            default_max_active_runs = $15,
+            default_max_requests_per_window = $16,
+            default_window_seconds = $17,
+            updated_by = $18
         WHERE id = true
-        RETURNING planning_provider, planning_model, planning_limits,
+        RETURNING planning_provider, planning_model, planning_base_url,
+                  planning_context_window, planning_max_output_tokens, planning_limits,
                   planning_api_key_ciphertext, planning_api_key_hint, planning_api_key_updated_at,
                   api_requests_per_minute, expensive_requests_per_minute,
                   retention_event_days, retention_report_days, retention_counter_days,
@@ -235,6 +261,9 @@ async fn update_settings(
     )
     .bind(&provider)
     .bind(&model)
+    .bind(&base_url)
+    .bind(payload.planning_context_window)
+    .bind(payload.planning_max_output_tokens)
     .bind(&payload.planning_limits)
     .bind(&ciphertext)
     .bind(&hint)
@@ -260,6 +289,9 @@ async fn update_settings(
     let metadata = serde_json::json!({
         "provider": row.planning_provider,
         "model": row.planning_model,
+        "baseUrl": row.planning_base_url,
+        "contextWindow": row.planning_context_window,
+        "maxOutputTokens": row.planning_max_output_tokens,
         "apiKeyConfigured": row.planning_api_key_ciphertext.is_some(),
         "apiRequestsPerMinute": row.api_requests_per_minute,
         "expensiveRequestsPerMinute": row.expensive_requests_per_minute,
@@ -276,6 +308,7 @@ async fn update_settings(
         updated_by = %context.user.id,
         provider = ?row.planning_provider,
         model = ?row.planning_model,
+        base_url_configured = row.planning_base_url.is_some(),
         api_key_configured = row.planning_api_key_ciphertext.is_some(),
         api_requests_per_minute = row.api_requests_per_minute,
         expensive_requests_per_minute = row.expensive_requests_per_minute,
@@ -298,7 +331,8 @@ async fn clear_planning_api_key(
             planning_api_key_updated_at = NULL,
             updated_by = $1
         WHERE id = true
-        RETURNING planning_provider, planning_model, planning_limits,
+        RETURNING planning_provider, planning_model, planning_base_url,
+                  planning_context_window, planning_max_output_tokens, planning_limits,
                   planning_api_key_ciphertext, planning_api_key_hint, planning_api_key_updated_at,
                   api_requests_per_minute, expensive_requests_per_minute,
                   retention_event_days, retention_report_days, retention_counter_days,
@@ -394,6 +428,111 @@ fn normalize_identifier(
             format!("Planning {label} is not a valid identifier."),
         ))
     }
+}
+
+const MAX_BASE_URL_LENGTH: usize = 300;
+const MIN_CONTEXT_WINDOW: i32 = 1_024;
+const MAX_CONTEXT_WINDOW: i32 = 2_000_000;
+const MIN_OUTPUT_TOKENS: i32 = 128;
+const MAX_OUTPUT_TOKENS: i32 = 200_000;
+
+fn invalid_base_url(message: &str) -> ApiError {
+    ApiError::invalid("invalid_planning_base_url", message)
+}
+
+/// Synchronous public-host gate for the admin-configured base URL. It performs
+/// no DNS resolution, so a public name that resolves to a private address is
+/// caught later by the worker's connection-time check (defense in depth).
+fn host_is_public(host: &str) -> bool {
+    let normalized = host
+        .trim()
+        .trim_matches(|character| character == '[' || character == ']')
+        .to_ascii_lowercase();
+    if normalized.is_empty() {
+        return false;
+    }
+    if normalized == "localhost"
+        || normalized == "metadata"
+        || normalized == "metadata.google.internal"
+        || normalized == "instance-data"
+        || normalized.ends_with(".local")
+        || normalized.ends_with(".localhost")
+        || normalized.ends_with(".internal")
+        || normalized.ends_with(".lan")
+    {
+        return false;
+    }
+    match normalized.parse::<std::net::IpAddr>() {
+        Ok(address) => classify_ip(address).is_public(),
+        Err(_) => true,
+    }
+}
+
+/// Validates a custom OpenAI-compatible base URL. It must be HTTPS, must not
+/// embed credentials or a query/fragment, and must not point at an internal or
+/// metadata host. Returns the trimmed value for storage.
+fn normalize_base_url(value: Option<&str>) -> Result<Option<String>, ApiError> {
+    let trimmed = value.map(str::trim).filter(|value| !value.is_empty());
+    let Some(trimmed) = trimmed else {
+        return Ok(None);
+    };
+    if trimmed.len() > MAX_BASE_URL_LENGTH {
+        return Err(invalid_base_url("The planning base URL is too long."));
+    }
+    let parsed =
+        Url::parse(trimmed).map_err(|_| invalid_base_url("The planning base URL is not a URL."))?;
+    if parsed.scheme() != "https" {
+        return Err(invalid_base_url("The planning base URL must use HTTPS."));
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(invalid_base_url(
+            "The planning base URL must not embed credentials.",
+        ));
+    }
+    if parsed.query().is_some() || parsed.fragment().is_some() {
+        return Err(invalid_base_url(
+            "The planning base URL must not include a query or fragment.",
+        ));
+    }
+    if !host_is_public(parsed.host_str().unwrap_or_default()) {
+        return Err(invalid_base_url(
+            "The planning base URL must be a public host.",
+        ));
+    }
+    Ok(Some(trimmed.to_owned()))
+}
+
+/// Validates the custom model metadata. Both bounds are optional; when both are
+/// present the output budget must fit inside the context window.
+fn validate_custom_provider(
+    context_window: Option<i32>,
+    max_output_tokens: Option<i32>,
+) -> Result<(), ApiError> {
+    if let Some(window) = context_window
+        && !(MIN_CONTEXT_WINDOW..=MAX_CONTEXT_WINDOW).contains(&window)
+    {
+        return Err(ApiError::invalid(
+            "invalid_planning_context",
+            "The planning context window is out of range.",
+        ));
+    }
+    if let Some(tokens) = max_output_tokens
+        && !(MIN_OUTPUT_TOKENS..=MAX_OUTPUT_TOKENS).contains(&tokens)
+    {
+        return Err(ApiError::invalid(
+            "invalid_planning_context",
+            "The planning max output tokens is out of range.",
+        ));
+    }
+    if let (Some(window), Some(tokens)) = (context_window, max_output_tokens)
+        && tokens > window
+    {
+        return Err(ApiError::invalid(
+            "invalid_planning_context",
+            "The planning max output tokens must not exceed the context window.",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_planning_limits(value: &Value) -> Result<(), ApiError> {
@@ -537,11 +676,55 @@ mod tests {
     }
 
     #[test]
+    fn accepts_and_normalizes_a_public_https_base_url() {
+        assert_eq!(
+            normalize_base_url(Some("  https://api.studio.nebius.com/v1 ")).expect("public"),
+            Some("https://api.studio.nebius.com/v1".to_owned())
+        );
+        assert_eq!(normalize_base_url(Some("   ")).expect("blank"), None);
+        assert_eq!(normalize_base_url(None).expect("none"), None);
+    }
+
+    #[test]
+    fn rejects_non_https_and_internal_base_urls() {
+        for value in [
+            "http://api.example.test/v1",
+            "https://localhost/v1",
+            "https://127.0.0.1/v1",
+            "https://10.0.0.5/v1",
+            "https://169.254.169.254/latest/meta-data",
+            "https://metadata.google.internal/computeMetadata/v1",
+            "https://service.internal/v1",
+            "https://database.local/v1",
+            "https://api.example.test/v1?x=1",
+            "ftp://api.example.test/v1",
+            "not-a-url",
+        ] {
+            assert!(
+                normalize_base_url(Some(value)).is_err(),
+                "expected {value:?} to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn enforces_custom_model_metadata_bounds() {
+        assert!(validate_custom_provider(Some(32_768), Some(4_096)).is_ok());
+        assert!(validate_custom_provider(None, None).is_ok());
+        assert!(validate_custom_provider(Some(512), Some(256)).is_err());
+        assert!(validate_custom_provider(Some(32_768), Some(64)).is_err());
+        assert!(validate_custom_provider(Some(4_096), Some(8_192)).is_err());
+    }
+
+    #[test]
     fn hint_never_contains_the_full_key_is_checked_elsewhere() {
         // Guard the invariant that a blank key leaves the stored value unchanged.
         let current = PlatformSettingsRow {
             planning_provider: None,
             planning_model: None,
+            planning_base_url: None,
+            planning_context_window: None,
+            planning_max_output_tokens: None,
             planning_limits: serde_json::json!({}),
             planning_api_key_ciphertext: Some("v1.a.b".to_owned()),
             planning_api_key_hint: Some("••••abcd".to_owned()),

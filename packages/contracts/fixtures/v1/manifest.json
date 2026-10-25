@@ -257,6 +257,12 @@
       "valid": true
     },
     {
+      "name": "requeued job event",
+      "validator": "jobEvent",
+      "path": "event.requeued.valid.json",
+      "valid": true
+    },
+    {
       "name": "unknown event type",
       "validator": "jobEvent",
       "path": "event.type.invalid.json",
