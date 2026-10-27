@@ -180,6 +180,8 @@ export interface RunSummaryEntry {
   readonly projectId: string;
   readonly jobId: string;
   readonly runType: JobGoal;
+  /** Planned test name for vulnerability runs, scenario name for load runs. */
+  readonly name: string;
   readonly status: string;
   readonly planId: string;
   readonly planVersion: number;
@@ -297,6 +299,8 @@ export interface RunDetail {
 export interface ComparisonSide {
   readonly runId: string;
   readonly runType: JobGoal;
+  /** Planned test name for vulnerability runs, scenario name for load runs. */
+  readonly name: string;
   readonly status: string;
   readonly planVersion: number;
   readonly scenarioId: string | null;

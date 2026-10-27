@@ -3,6 +3,7 @@ import { AdminView } from "./AdminView";
 import { ApiError, type AuthUser, getCsrfToken, getSession, login, logout } from "./api";
 import { LoginView } from "./LoginView";
 import { ProjectsView } from "./ProjectsView";
+import { navigate, projectsPath } from "./routing";
 
 type AuthState =
   | { readonly status: "loading" }
@@ -125,6 +126,8 @@ export default function App() {
     } catch {
       setAuth({ status: "signedOut", csrfToken: "" });
     }
+    // Do not leave a project deep link resident for the next sign-in.
+    navigate(projectsPath());
     setView("projects");
   };
 

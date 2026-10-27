@@ -249,7 +249,10 @@ export function RepositoriesPanel({
   }
 
   return (
-    <section className="border-b border-pf-border px-5 py-4" aria-labelledby="repositories-heading">
+    <section
+      className="rounded-lg border border-pf-border bg-pf-surface px-5 py-4"
+      aria-labelledby="repositories-heading"
+    >
       <div className="flex items-center justify-between gap-3">
         <h3 id="repositories-heading" className="text-[13px] font-semibold">
           Repositories

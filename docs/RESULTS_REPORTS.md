@@ -36,7 +36,7 @@ All routes require authentication and project membership; non-members receive
 
 | Method | Route | Purpose |
 |---|---|---|
-| GET | `/api/projects/{projectId}/runs` | Run list with status, plan version, timestamps, outcome counts, and report status |
+| GET | `/api/projects/{projectId}/runs` | Run list with the planned test or load scenario name, status, plan version, timestamps, outcome counts, and report status |
 | GET | `/api/runs/{runId}` | Run summary, per-test results with evidence metadata, recommendations, metric summary, and report metadata |
 | GET | `/api/runs/{runId}/events` | Server-sent run event stream (see below) |
 | GET | `/api/runs/{runId}/report` | Report row, version history, and the latest content |

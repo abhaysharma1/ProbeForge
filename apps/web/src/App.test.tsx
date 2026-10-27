@@ -234,6 +234,7 @@ const RUN = {
   projectId: PROJECT.id,
   jobId: JOB.id,
   runType: "vulnerability_testing",
+  name: "Missing security headers",
   status: "completed",
   planId: PLAN.id,
   planVersion: 1,
@@ -729,6 +730,8 @@ describe("App", () => {
     vi.unstubAllGlobals();
     FakeEventSource.instances = [];
     vi.stubGlobal("EventSource", FakeEventSource);
+    // Every test starts on the projects list; routes are hash-addressable.
+    window.location.hash = "#/projects";
   });
 
   afterEach(() => {
@@ -761,13 +764,17 @@ describe("App", () => {
   it("opens a project and shows members plus the audit trail", async () => {
     await renderSignedIn({ session: true, projects: [PROJECT] });
 
-    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
+    fireEvent.click(await screen.findByRole("link", { name: /Payments API/ }));
 
     expect(await screen.findByRole("heading", { name: "Payments API" })).toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole("link", { name: "Members" }));
     expect((await screen.findAllByText("owner@example.test")).length).toBeGreaterThan(0);
+    expect(screen.getByLabelText("Member email")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("link", { name: "Activity" }));
     expect(await screen.findByText("Audit trail")).toBeInTheDocument();
     expect(await screen.findByText("Created project")).toBeInTheDocument();
-    expect(screen.getByLabelText("Member email")).toBeInTheDocument();
   });
 
   it("does not offer member management or audit access to a viewer", async () => {
@@ -777,13 +784,80 @@ describe("App", () => {
       role: "viewer",
     });
 
-    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
+    fireEvent.click(await screen.findByRole("link", { name: /Payments API/ }));
+    fireEvent.click(await screen.findByRole("link", { name: "Members" }));
 
     expect(
       await screen.findByText("Viewers can read project data. Member management is restricted."),
     ).toBeInTheDocument();
     expect(screen.queryByLabelText("Member email")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Activity" })).not.toBeInTheDocument();
     expect(screen.queryByText("Audit trail")).not.toBeInTheDocument();
+  });
+
+  it("opens a dedicated project page with hash-addressable tabs", async () => {
+    await renderSignedIn({ session: true, projects: [PROJECT], jobs: [JOB] });
+
+    fireEvent.click(await screen.findByRole("link", { name: /Payments API/ }));
+
+    expect(await screen.findByRole("link", { name: "Repositories" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(window.location.hash).toBe(`#/projects/${PROJECT.id}/repositories`);
+    expect(screen.queryByText("Your projects")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("link", { name: "Analysis jobs" }));
+
+    expect(window.location.hash).toBe(`#/projects/${PROJECT.id}/jobs`);
+    expect(await screen.findByRole("heading", { name: "Analysis jobs" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Analysis jobs" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
+  it("restores the active project tab when the page is reopened from its URL", async () => {
+    window.location.hash = `#/projects/${PROJECT.id}/members`;
+    installFetch({ session: true, projects: [PROJECT] });
+    const first = render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Payments API" })).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "Members" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(await screen.findByLabelText("Member email")).toBeInTheDocument();
+
+    first.unmount();
+    installFetch({ session: true, projects: [PROJECT] });
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Payments API" })).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "Members" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
+  it("shows a neutral notice when a project route is not accessible", async () => {
+    window.location.hash = "#/projects/33333333-3333-4333-8333-333333333333/repositories";
+    installFetch({ session: true, projects: [PROJECT] });
+    render(<App />);
+
+    expect(await screen.findByText("This project is not available.")).toBeInTheDocument();
+    expect(screen.queryByText("Payments API")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Back to projects" })).toBeInTheDocument();
+  });
+
+  it("returns to the project list from the project page", async () => {
+    await renderSignedIn({ session: true, projects: [PROJECT] });
+
+    fireEvent.click(await screen.findByRole("link", { name: /Payments API/ }));
+    fireEvent.click(await screen.findByRole("link", { name: "All projects" }));
+
+    expect(await screen.findByRole("heading", { name: "Projects" })).toBeInTheDocument();
+    expect(window.location.hash).toBe("#/projects");
   });
 
   it("subscribes to a queued job's stream and reflects worker progress", async () => {
@@ -791,7 +865,8 @@ describe("App", () => {
     const jobsBox = { jobs: [queued] as Job[] };
     await renderSignedIn({ session: true, projects: [PROJECT], jobsBox });
 
-    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
+    fireEvent.click(await screen.findByRole("link", { name: /Payments API/ }));
+    fireEvent.click(await screen.findByRole("link", { name: "Analysis jobs" }));
 
     expect(await screen.findByText(/· Queued$/)).toBeInTheDocument();
 
@@ -856,7 +931,8 @@ describe("App", () => {
     const queued: Job = { ...JOB, status: "queued", currentPlanId: null };
     await renderSignedIn({ session: true, projects: [PROJECT], jobs: [queued] });
 
-    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
+    fireEvent.click(await screen.findByRole("link", { name: /Payments API/ }));
+    fireEvent.click(await screen.findByRole("link", { name: "Analysis jobs" }));
     expect(await screen.findByText(/· Queued$/)).toBeInTheDocument();
 
     await waitFor(() => {
@@ -891,8 +967,9 @@ describe("App", () => {
       plan: PLAN,
     });
 
-    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
-    fireEvent.click(await screen.findByRole("button", { name: /Payments plan review/ }));
+    fireEvent.click(await screen.findByRole("link", { name: /Payments API/ }));
+    fireEvent.click(await screen.findByRole("link", { name: "Analysis jobs" }));
+    fireEvent.click(await screen.findByRole("link", { name: /Payments plan review/ }));
 
     expect(
       await screen.findByRole("heading", { name: "Payments plan review" }),
@@ -930,8 +1007,9 @@ describe("App", () => {
       plan,
     });
 
-    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
-    fireEvent.click(await screen.findByRole("button", { name: /Payments plan review/ }));
+    fireEvent.click(await screen.findByRole("link", { name: /Payments API/ }));
+    fireEvent.click(await screen.findByRole("link", { name: "Analysis jobs" }));
+    fireEvent.click(await screen.findByRole("link", { name: /Payments plan review/ }));
 
     expect(
       await screen.findByText(/No route is configured for this HTTP test/),
@@ -946,12 +1024,13 @@ describe("App", () => {
       plan: LOAD_PLAN,
     });
 
-    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
-    fireEvent.click(await screen.findByRole("button", { name: /Load plan review/ }));
+    fireEvent.click(await screen.findByRole("link", { name: /Payments API/ }));
+    fireEvent.click(await screen.findByRole("link", { name: "Analysis jobs" }));
+    fireEvent.click(await screen.findByRole("link", { name: /Load plan review/ }));
 
     expect(await screen.findByRole("heading", { name: "Load plan review" })).toBeInTheDocument();
     expect(
-      screen.getByText(
+      await screen.findByText(
         "Approval pins this scenario to plan v1. No load traffic is sent by approval.",
       ),
     ).toBeInTheDocument();
@@ -970,11 +1049,12 @@ describe("App", () => {
       runDetail: RUN_DETAIL,
     });
 
-    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
-    expect(await screen.findByText("Runs")).toBeInTheDocument();
-    fireEvent.click(await screen.findByRole("button", { name: /View results/ }));
+    fireEvent.click(await screen.findByRole("link", { name: /Payments API/ }));
+    fireEvent.click(await screen.findByRole("link", { name: "Runs" }));
+    fireEvent.click(await screen.findByRole("link", { name: /View results/ }));
 
     expect(await screen.findByRole("heading", { name: "Run results" })).toBeInTheDocument();
+    expect((await screen.findAllByText(/Missing security headers/)).length).toBeGreaterThan(0);
     expect(
       (await screen.findAllByText("Missing security header observed.")).length,
     ).toBeGreaterThan(0);
@@ -987,9 +1067,8 @@ describe("App", () => {
     const runsBox = { runs: [RUNNING_RUN] as unknown[] };
     await renderSignedIn({ session: true, projects: [PROJECT], runsBox });
 
-    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
-
-    expect(await screen.findByText("Runs")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("link", { name: /Payments API/ }));
+    fireEvent.click(await screen.findByRole("link", { name: "Runs" }));
 
     // A stream was opened for the active run — per run, not per HTTP request.
     await waitFor(() => {
@@ -1048,8 +1127,9 @@ describe("App", () => {
       runDetailBox,
     });
 
-    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
-    fireEvent.click(await screen.findByRole("button", { name: /View results/ }));
+    fireEvent.click(await screen.findByRole("link", { name: /Payments API/ }));
+    fireEvent.click(await screen.findByRole("link", { name: "Runs" }));
+    fireEvent.click(await screen.findByRole("link", { name: /View results/ }));
 
     expect(await screen.findByRole("heading", { name: "Run results" })).toBeInTheDocument();
     // An active run surfaces its live indicator next to the status pill.
@@ -1103,8 +1183,10 @@ describe("App", () => {
       runDetailBox,
     });
 
-    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
-    fireEvent.click(await screen.findByRole("button", { name: /View results/ }));
+    fireEvent.click(await screen.findByRole("link", { name: /Payments API/ }));
+    fireEvent.click(await screen.findByRole("link", { name: "Runs" }));
+    fireEvent.click(await screen.findByRole("link", { name: /View results/ }));
+    expect(await screen.findByRole("heading", { name: "Run results" })).toBeInTheDocument();
     expect(await screen.findByText("Live updates")).toBeInTheDocument();
 
     await waitFor(() => {
@@ -1143,7 +1225,7 @@ describe("App", () => {
       createdJob: JOB,
     });
 
-    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
+    fireEvent.click(await screen.findByRole("link", { name: /Payments API/ }));
 
     const repoInput = await screen.findByLabelText("Repository URL");
     fireEvent.change(repoInput, { target: { value: "https://github.com/owner/repo" } });
@@ -1165,7 +1247,7 @@ describe("App", () => {
       repositories: [REPOSITORY],
     });
 
-    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
+    fireEvent.click(await screen.findByRole("link", { name: /Payments API/ }));
 
     expect(await screen.findByText("https://github.com/owner/repo")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
@@ -1183,7 +1265,8 @@ describe("App", () => {
       jobs: [{ ...JOB, status: "failed", currentPlanId: null }],
     });
 
-    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
+    fireEvent.click(await screen.findByRole("link", { name: /Payments API/ }));
+    fireEvent.click(await screen.findByRole("link", { name: "Analysis jobs" }));
 
     fireEvent.click(await screen.findByRole("button", { name: "Re-run" }));
 
@@ -1194,7 +1277,7 @@ describe("App", () => {
   it("rejects a non-public repository URL before adding", async () => {
     await renderSignedIn({ session: true, projects: [PROJECT], targets: [] });
 
-    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
+    fireEvent.click(await screen.findByRole("link", { name: /Payments API/ }));
 
     const repoInput = await screen.findByLabelText("Repository URL");
     fireEvent.change(repoInput, { target: { value: "http://192.168.0.10/repo" } });
@@ -1213,8 +1296,9 @@ describe("App", () => {
       planPatchStatus: 409,
     });
 
-    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
-    fireEvent.click(await screen.findByRole("button", { name: /Payments plan review/ }));
+    fireEvent.click(await screen.findByRole("link", { name: /Payments API/ }));
+    fireEvent.click(await screen.findByRole("link", { name: "Analysis jobs" }));
+    fireEvent.click(await screen.findByRole("link", { name: /Payments plan review/ }));
     fireEvent.click(await screen.findByLabelText("Missing security headers"));
     fireEvent.click(await screen.findByRole("button", { name: "Save selection" }));
 
@@ -1232,8 +1316,9 @@ describe("App", () => {
       plan: PLAN,
     });
 
-    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
-    fireEvent.click(await screen.findByRole("button", { name: /Payments plan review/ }));
+    fireEvent.click(await screen.findByRole("link", { name: /Payments API/ }));
+    fireEvent.click(await screen.findByRole("link", { name: "Analysis jobs" }));
+    fireEvent.click(await screen.findByRole("link", { name: /Payments plan review/ }));
 
     expect(
       await screen.findByText(/your project role does not permit changing the selection/),

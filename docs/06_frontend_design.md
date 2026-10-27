@@ -324,6 +324,10 @@ Do not give every navigation item its own bright background, gradient, badge, or
 - Preserve appropriate filters and selected project context when moving between related screens.
 - Use clear loading states for route transitions that require substantial data fetching.
 - Do not animate the entire application shell on every navigation.
+- Make screens addressable by URL so a refresh, a browser Back action, or a shared
+  link reopens the same project, tab, plan review, or run report.
+- Never encode authorization in the URL. An unreachable project or record shows a
+  neutral unavailable state and must not reveal another tenant's or project's data.
 
 ---
 
@@ -399,6 +403,32 @@ Use a clean table or structured list containing:
 Keep metadata compact.
 
 Use subtle status indicators and text labels rather than colorful status cards.
+
+### Project page
+
+Opening a project navigates to a dedicated page in the main workspace. Do not
+open project details in a side panel beside the project list.
+
+The page header carries the project name, slug, the signed-in user's role, the
+member count, and the creation date. Below it, use a compact horizontal tab bar
+for the project's working surfaces:
+
+- Repositories (default).
+- Analysis jobs.
+- Runs.
+- Targets.
+- Members.
+- Activity (the audit trail; visible only to owners and admins).
+
+Tabs are addressable (`#/projects/{id}/{tab}`) so a refresh keeps the active
+section. Plan reviews and run reports are addressable too and return to the tab
+they came from. Hide tabs the role cannot use, and show a permission notice when
+a direct link targets a restricted section. Read-only roles keep read access;
+server authorization remains authoritative for every action.
+
+Keep tab content in a single readable column. Repositories, jobs, runs, targets,
+members, and audit events each render as a bordered panel with their own
+loading, empty, and error states.
 
 ### Create project flow
 

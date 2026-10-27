@@ -453,6 +453,7 @@ async fn run_summary_results_and_tenant_isolation() {
         )
         .await;
     assert_eq!(detail.status, StatusCode::OK, "{:?}", detail.body);
+    assert_eq!(detail.body["run"]["name"], "Missing headers");
     assert_eq!(detail.body["run"]["resultCounts"]["failed"], 1);
     assert_eq!(detail.body["run"]["resultCounts"]["passed"], 1);
     assert_eq!(detail.body["run"]["resultCounts"]["confirmed"], 1);
@@ -480,6 +481,7 @@ async fn run_summary_results_and_tenant_isolation() {
         .await;
     assert_eq!(list.status, StatusCode::OK);
     assert_eq!(list.body.as_array().expect("runs").len(), 1);
+    assert_eq!(list.body[0]["name"], "Missing headers");
 
     let outsider = world
         .app
@@ -728,6 +730,8 @@ async fn run_comparison_shows_profile_target_scenario_and_timestamps() {
     assert_eq!(comparison.status, StatusCode::OK, "{:?}", comparison.body);
     assert_eq!(comparison.body["left"]["scenarioName"], "Baseline read");
     assert_eq!(comparison.body["right"]["scenarioName"], "Peak read");
+    assert_eq!(comparison.body["left"]["name"], "Baseline read");
+    assert_eq!(comparison.body["right"]["name"], "Peak read");
     assert_eq!(comparison.body["left"]["profile"]["virtualUsers"], 2);
     assert_eq!(comparison.body["right"]["profile"]["virtualUsers"], 8);
     assert!(comparison.body["left"]["targetOrigin"].as_str().is_some());

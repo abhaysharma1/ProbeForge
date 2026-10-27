@@ -135,8 +135,8 @@ function OutcomeLine({ result }: { readonly result: TestResultView }) {
 function ComparisonColumn({ side }: { readonly side: ComparisonSide }) {
   return (
     <div className="min-w-0">
-      <p className="truncate text-[12px] font-medium" title={side.scenarioName ?? side.runId}>
-        {side.scenarioName ?? RUN_TYPE_LABELS[side.runType] ?? side.runType}
+      <p className="truncate text-[12px] font-medium" title={side.name || side.runId}>
+        {side.name || side.scenarioName || RUN_TYPE_LABELS[side.runType] || side.runType}
       </p>
       <p className="mt-0.5 text-[10px] text-pf-text-muted">
         Plan v{side.planVersion} · {side.profile?.virtualUsers ?? "—"} VUs ·{" "}
@@ -397,6 +397,9 @@ export function RunReport({
           <h2 className="mt-1 text-[22px] font-semibold leading-tight tracking-[-0.02em]">
             {RUN_TYPE_LABELS[run.runType] ?? run.runType}
           </h2>
+          <p className="mt-1 text-[12px] font-medium text-pf-text-muted">
+            {run.name ? `${run.name} · plan v${run.planVersion}` : `plan v${run.planVersion}`}
+          </p>
           <p className="mt-1.5 max-w-2xl text-[13px] text-pf-text-secondary">
             Stored results and evidence are authoritative. Generated summaries and recommendations
             are separate and every claim cites a result, evidence row, or metric bucket, or is
@@ -774,8 +777,7 @@ export function RunReport({
               <option value="">Select a run</option>
               {siblings.map((run) => (
                 <option key={run.id} value={run.id}>
-                  {RUN_TYPE_LABELS[run.runType] ?? run.runType} · v{run.planVersion} ·{" "}
-                  {formatDateTime(run.createdAt)}
+                  {run.name} · v{run.planVersion} · {formatDateTime(run.createdAt)}
                 </option>
               ))}
             </select>

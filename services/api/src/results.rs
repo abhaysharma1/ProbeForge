@@ -69,6 +69,8 @@ struct RunRow {
     plan_id: Uuid,
     plan_version: i32,
     run_type: String,
+    /// Planned test name for vulnerability runs, scenario name for load runs.
+    name: String,
     status: String,
     load_scenario_id: Option<Uuid>,
     target_authorization_id: Uuid,
@@ -84,6 +86,8 @@ struct RunListRow {
     project_id: Uuid,
     job_id: Uuid,
     run_type: String,
+    /// Planned test name for vulnerability runs, scenario name for load runs.
+    name: String,
     status: String,
     plan_id: Uuid,
     plan_version: i32,
@@ -266,6 +270,7 @@ struct RunSummaryDto {
     project_id: Uuid,
     job_id: Uuid,
     run_type: String,
+    name: String,
     status: String,
     plan_id: Uuid,
     plan_version: i32,
@@ -283,6 +288,7 @@ impl From<RunListRow> for RunSummaryDto {
             project_id: row.project_id,
             job_id: row.job_id,
             run_type: row.run_type,
+            name: row.name,
             status: row.status,
             plan_id: row.plan_id,
             plan_version: row.plan_version,
@@ -488,6 +494,7 @@ struct ExportQuery {
 struct ComparisonSideDto {
     run_id: Uuid,
     run_type: String,
+    name: String,
     status: String,
     plan_version: i32,
     scenario_id: Option<Uuid>,
@@ -530,7 +537,9 @@ async fn list_runs(
     load_project_role(&state.pool, context.user.id, project_id).await?;
     let rows: Vec<RunListRow> = sqlx::query_as(
         r#"
-        SELECT r.id, r.project_id, r.job_id, r.run_type, r.status, r.plan_id,
+        SELECT r.id, r.project_id, r.job_id, r.run_type,
+               COALESCE(pt.name, ls.name, r.run_type) AS name,
+               r.status, r.plan_id,
                r.plan_version, r.started_at, r.finished_at, r.created_at,
                (SELECT count(*) FROM test_results tr
                  WHERE tr.run_id = r.id AND tr.outcome = 'passed') AS passed,
@@ -550,6 +559,10 @@ async fn list_runs(
                        WHEN r.run_type = 'load_testing' THEN 'load' ELSE 'security'
                    END) AS report_status
         FROM test_runs r
+        LEFT JOIN planned_tests pt
+               ON pt.id = r.planned_test_id AND pt.project_id = r.project_id
+        LEFT JOIN load_scenarios ls
+               ON ls.id = r.load_scenario_id AND ls.project_id = r.project_id
         WHERE r.project_id = $1
         ORDER BY r.created_at DESC
         LIMIT $2
@@ -861,9 +874,14 @@ async fn load_run_for_user(pool: &PgPool, user_id: Uuid, run_id: Uuid) -> Result
     let row: Option<RunRow> = sqlx::query_as(
         r#"
         SELECT r.id, r.project_id, r.job_id, r.plan_id, r.plan_version, r.run_type,
+               COALESCE(pt.name, ls.name, r.run_type) AS name,
                r.status, r.load_scenario_id, r.target_authorization_id,
                r.started_at, r.finished_at, r.created_at, pm.role
         FROM test_runs r
+        LEFT JOIN planned_tests pt
+               ON pt.id = r.planned_test_id AND pt.project_id = r.project_id
+        LEFT JOIN load_scenarios ls
+               ON ls.id = r.load_scenario_id AND ls.project_id = r.project_id
         JOIN project_members pm ON pm.project_id = r.project_id AND pm.user_id = $2
         WHERE r.id = $1
         "#,
@@ -1195,6 +1213,7 @@ async fn load_run_detail(pool: &PgPool, run: &RunRow) -> Result<RunDetailDto, Ap
             project_id: run.project_id,
             job_id: run.job_id,
             run_type: run.run_type.clone(),
+            name: run.name.clone(),
             status: run.status.clone(),
             plan_id: run.plan_id,
             plan_version: run.plan_version,
@@ -1237,6 +1256,7 @@ async fn build_comparison_side(pool: &PgPool, run: &RunRow) -> Result<Comparison
     Ok(ComparisonSideDto {
         run_id: run.id,
         run_type: run.run_type.clone(),
+        name: run.name.clone(),
         status: run.status.clone(),
         plan_version: run.plan_version,
         scenario_id: scenario.as_ref().map(|row| row.scenario_id),
@@ -1899,6 +1919,7 @@ mod tests {
             plan_id: Uuid::new_v4(),
             plan_version: 2,
             run_type: run_type.to_owned(),
+            name: "Fixture test".to_owned(),
             status: "completed".to_owned(),
             load_scenario_id: None,
             target_authorization_id: Uuid::new_v4(),

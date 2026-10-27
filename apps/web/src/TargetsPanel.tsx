@@ -205,7 +205,10 @@ export function TargetsPanel({
   }
 
   return (
-    <section className="border-b border-pf-border px-5 py-4" aria-labelledby="targets-heading">
+    <section
+      className="rounded-lg border border-pf-border bg-pf-surface px-5 py-4"
+      aria-labelledby="targets-heading"
+    >
       <div className="flex items-center justify-between gap-3">
         <h3 id="targets-heading" className="text-[13px] font-semibold">
           Targets

@@ -495,3 +495,9 @@ rather than a new phase gate.
   failed run creation with `relation "run_events" does not exist`) is refused
   traffic instead. See [D-051](DECISION_LOG.md), [DATABASE.md](DATABASE.md), and
   the [report](phases/17a_run_events_migration_guard_report.md).
+- **Dedicated project pages** — opening a project now navigates to a full page
+  with hash-addressable tabs (Repositories, Analysis jobs, Runs, Targets,
+  Members, Activity) instead of a right-hand detail panel. Plan reviews and run
+  reports are addressable too and return to the tab they came from. No router
+  dependency or server rewrite rule is required. See [D-052](DECISION_LOG.md)
+  and the [report](phases/18_project_page_navigation_report.md).
