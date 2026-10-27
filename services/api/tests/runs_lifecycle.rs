@@ -156,6 +156,21 @@ async fn seed_job(app: &TestApp, project_id: Uuid, owner_id: Uuid, goal: &str) -
 
 /// Seed an approved vulnerability plan with one selected planned test.
 async fn seed_approved_vulnerability_plan(app: &TestApp, project_id: Uuid, owner_id: Uuid) -> Uuid {
+    seed_approved_vulnerability_plan_with_configuration(
+        app,
+        project_id,
+        owner_id,
+        json!({"route": "/"}),
+    )
+    .await
+}
+
+async fn seed_approved_vulnerability_plan_with_configuration(
+    app: &TestApp,
+    project_id: Uuid,
+    owner_id: Uuid,
+    configuration: Value,
+) -> Uuid {
     let job_id = seed_job(app, project_id, owner_id, "vulnerability_testing").await;
     let plan_id = Uuid::new_v4();
     sqlx::query(
@@ -177,13 +192,14 @@ async fn seed_approved_vulnerability_plan(app: &TestApp, project_id: Uuid, owner
     sqlx::query(
         "INSERT INTO planned_tests (
             id, project_id, plan_id, catalog_test_id, name, rationale, risk,
-            expected_evidence, selected
+            expected_evidence, configuration, selected
          ) VALUES ($1, $2, $3, 'http.headers.missing', 'Missing headers',
-                   'Inert fixture', 'low', 'Headers', true)",
+                   'Inert fixture', 'low', 'Headers', $4, true)",
     )
     .bind(planned_test_id)
     .bind(project_id)
     .bind(plan_id)
+    .bind(configuration)
     .execute(&app.pool)
     .await
     .expect("planned test insert");
@@ -413,6 +429,51 @@ async fn rejects_inactive_authorization_and_unapproved_plan() {
 }
 
 #[tokio::test]
+async fn rejects_plans_whose_tests_cannot_be_configured() {
+    let Some(world) = setup().await else {
+        return;
+    };
+    let plan_id = seed_approved_vulnerability_plan_with_configuration(
+        &world.app,
+        world.project_id,
+        world.owner_id,
+        json!({}),
+    )
+    .await;
+    let authorization =
+        seed_target_authorization(&world.app, world.project_id, world.owner_id, true).await;
+
+    let refused = world
+        .app
+        .send(
+            Method::POST,
+            &format!("/api/plans/{plan_id}/runs"),
+            Some(&world.owner),
+            Some(json!({ "targetAuthorizationId": authorization })),
+        )
+        .await;
+    assert_eq!(
+        refused.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{:?}",
+        refused.body
+    );
+    assert_eq!(
+        refused.body["error"]["code"],
+        "invalid_adapter_configuration"
+    );
+
+    let stored: i64 = sqlx::query_scalar("SELECT count(*) FROM test_runs WHERE plan_id = $1")
+        .bind(plan_id)
+        .fetch_one(&world.app.pool)
+        .await
+        .expect("run count");
+    assert_eq!(stored, 0, "an unexecutable test must not be queued");
+
+    world.app.cleanup().await;
+}
+
+#[tokio::test]
 async fn creates_load_runs_and_cancels_queued_runs() {
     let Some(world) = setup().await else {
         return;
@@ -513,4 +574,226 @@ fn member_id(session: &Session) -> Uuid {
             .expect("session user id"),
     )
     .expect("session user uuid")
+}
+
+#[tokio::test]
+async fn run_events_stream_replays_and_denies_non_members() {
+    let Some(world) = setup().await else {
+        return;
+    };
+    let plan_id = seed_approved_load_plan(&world.app, world.project_id, world.owner_id).await;
+    let authorization =
+        seed_target_authorization(&world.app, world.project_id, world.owner_id, true).await;
+
+    let created = world
+        .app
+        .send(
+            Method::POST,
+            &format!("/api/plans/{plan_id}/runs"),
+            Some(&world.owner),
+            Some(json!({ "targetAuthorizationId": authorization })),
+        )
+        .await;
+    assert_eq!(created.status, StatusCode::OK, "{:?}", created.body);
+    let run_id = created.body[0]["id"].as_str().expect("run id").to_owned();
+    let job_id: Uuid = sqlx::query_scalar("SELECT job_id FROM test_runs WHERE id = $1")
+        .bind(Uuid::parse_str(&run_id).expect("run uuid"))
+        .fetch_one(&world.app.pool)
+        .await
+        .expect("job id");
+
+    // A stream URL is member-gated like every other run resource.
+    let outsider = world
+        .app
+        .send_raw(
+            Method::GET,
+            &format!("/api/runs/{run_id}/events?follow=false"),
+            Some(&world.outsider),
+        )
+        .await;
+    assert_eq!(outsider.status, StatusCode::NOT_FOUND);
+
+    // The queued run's lifecycle events are already in the run stream.
+    let events = world
+        .app
+        .send_raw(
+            Method::GET,
+            &format!("/api/runs/{run_id}/events?follow=false"),
+            Some(&world.owner),
+        )
+        .await;
+    assert_eq!(events.status, StatusCode::OK);
+    let body = String::from_utf8_lossy(&events.body);
+    assert!(body.contains("run.queued"), "{body}");
+    assert!(body.contains("\"sequence\":1"), "{body}");
+    assert!(body.contains("id: 1"), "replayable sequences: {body}");
+
+    // Cancelling moves both streams: the run stream keeps its own sequence.
+    let cancelled = world
+        .app
+        .send(
+            Method::POST,
+            &format!("/api/runs/{run_id}/cancel"),
+            Some(&world.owner),
+            None,
+        )
+        .await;
+    assert_eq!(cancelled.status, StatusCode::OK, "{:?}", cancelled.body);
+
+    // Full replay: both lifecycle events, ordered by run sequence.
+    let replay = world
+        .app
+        .send_raw(
+            Method::GET,
+            &format!("/api/runs/{run_id}/events?follow=false"),
+            Some(&world.owner),
+        )
+        .await;
+    assert_eq!(replay.status, StatusCode::OK);
+    let replay_body = String::from_utf8_lossy(&replay.body);
+    assert!(replay_body.contains("run.queued"), "{replay_body}");
+    assert!(replay_body.contains("run.cancelled"), "{replay_body}");
+    assert!(replay_body.contains("\"sequence\":2"), "{replay_body}");
+    // The queued event is dual-written to the parent job's stream unchanged.
+    let job_events: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM job_events WHERE job_id = $1 AND event_type = 'run.queued'",
+    )
+    .bind(job_id)
+    .fetch_one(&world.app.pool)
+    .await
+    .expect("job event count");
+    assert_eq!(job_events, 1, "dual-write keeps the jobs stream intact");
+
+    // Reconnects replay from Last-Event-ID (or the `after` param): only events
+    // after the cursor are re-sent, in order.
+    let her = world
+        .app
+        .send_raw_with_last_event_id(
+            Method::GET,
+            &format!("/api/runs/{run_id}/events?follow=false"),
+            Some(&world.owner),
+            Some("1"),
+        )
+        .await;
+    assert_eq!(her.status, StatusCode::OK);
+    let her_body = String::from_utf8_lossy(&her.body);
+    assert!(!her_body.contains("run.queued"), "{her_body}");
+    assert!(her_body.contains("run.cancelled"), "{her_body}");
+
+    let via_query = world
+        .app
+        .send_raw(
+            Method::GET,
+            &format!("/api/runs/{run_id}/events?follow=false&after=1"),
+            Some(&world.owner),
+        )
+        .await;
+    assert_eq!(via_query.status, StatusCode::OK);
+    let via_query_body = String::from_utf8_lossy(&via_query.body);
+    assert!(!via_query_body.contains("run.queued"), "{via_query_body}");
+    assert!(via_query_body.contains("run.cancelled"), "{via_query_body}");
+
+    // Cursor validation: both the header and the query parameter reject junk.
+    let bad_header = world
+        .app
+        .send_raw_with_last_event_id(
+            Method::GET,
+            &format!("/api/runs/{run_id}/events?follow=false"),
+            Some(&world.owner),
+            Some("not-a-number"),
+        )
+        .await;
+    assert_eq!(bad_header.status, StatusCode::BAD_REQUEST);
+
+    let bad_query = world
+        .app
+        .send_raw(
+            Method::GET,
+            &format!("/api/runs/{run_id}/events?follow=false&after=-1"),
+            Some(&world.owner),
+        )
+        .await;
+    assert_eq!(bad_query.status, StatusCode::BAD_REQUEST);
+
+    world.app.cleanup().await;
+}
+
+#[tokio::test]
+async fn run_events_follow_stream_drains_then_stops_on_terminal_run() {
+    let Some(world) = setup().await else {
+        return;
+    };
+    let plan_id = seed_approved_load_plan(&world.app, world.project_id, world.owner_id).await;
+    let authorization =
+        seed_target_authorization(&world.app, world.project_id, world.owner_id, true).await;
+
+    let created = world
+        .app
+        .send(
+            Method::POST,
+            &format!("/api/plans/{plan_id}/runs"),
+            Some(&world.owner),
+            Some(json!({ "targetAuthorizationId": authorization })),
+        )
+        .await;
+    assert_eq!(created.status, StatusCode::OK, "{:?}", created.body);
+    let run_id = created.body[0]["id"].as_str().expect("run id").to_owned();
+    let run_uuid = Uuid::parse_str(&run_id).expect("run uuid");
+    let job_id: Uuid = sqlx::query_scalar("SELECT job_id FROM test_runs WHERE id = $1")
+        .bind(run_uuid)
+        .fetch_one(&world.app.pool)
+        .await
+        .expect("job id");
+
+    // Simulate a finished run: a terminal status with a completion and a report
+    // event already durably recorded (in both streams, as workers write them).
+    sqlx::query("UPDATE test_runs SET status = 'completed', finished_at = now() WHERE id = $1")
+        .bind(run_uuid)
+        .execute(&world.app.pool)
+        .await
+        .expect("run completion");
+    {
+        let mut transaction = world.app.pool.begin().await.expect("event transaction");
+        probe_forge_queue::append_run_and_job_event(
+            &mut transaction,
+            run_uuid,
+            job_id,
+            "run.completed",
+            json!({ "runId": run_uuid }),
+        )
+        .await
+        .expect("completion event");
+        probe_forge_queue::append_run_and_job_event(
+            &mut transaction,
+            run_uuid,
+            job_id,
+            "report.completed",
+            json!({ "reportType": "security", "version": 1 }),
+        )
+        .await
+        .expect("report event");
+        transaction
+            .commit()
+            .await
+            .expect("event transaction commit");
+    }
+
+    // A following stream drains every recorded event and then closes: the
+    // terminal gate keeps a completed run from holding connections open, even
+    // when a report event lands right after the lifecycle tail.
+    let streamed = world
+        .app
+        .send_raw(
+            Method::GET,
+            &format!("/api/runs/{run_id}/events"),
+            Some(&world.owner),
+        )
+        .await;
+    assert_eq!(streamed.status, StatusCode::OK);
+    let body = String::from_utf8_lossy(&streamed.body);
+    assert!(body.contains("run.completed"), "{body}");
+    assert!(body.contains("report.completed"), "{body}");
+    assert!(body.contains("\"sequence\":3"), "{body}");
+
+    world.app.cleanup().await;
 }

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use probeforge_contracts::{
     ContractError, JobCreation, MAX_CONTRACT_BYTES, parse_and_validate_json, validate_job_creation,
     validate_job_event, validate_load_profile, validate_load_scenario, validate_plan,
-    validate_run_request, validate_target_authorization, validate_test_result,
+    validate_run_event, validate_run_request, validate_target_authorization, validate_test_result,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -47,6 +47,7 @@ fn accepted(validator: &str, value: &Value) -> bool {
         "runRequest" => validate_run_request(value).is_ok(),
         "testResult" => validate_test_result(value).is_ok(),
         "jobEvent" => validate_job_event(value).is_ok(),
+        "runEvent" => validate_run_event(value).is_ok(),
         other => panic!("unknown fixture validator: {other}"),
     }
 }

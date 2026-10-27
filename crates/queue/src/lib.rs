@@ -209,6 +209,67 @@ pub async fn append_job_event(
     Ok(sequence)
 }
 
+/// Append an ordered event to a run's stream inside the caller's transaction.
+/// Mirrors `append_job_event`: the run row is locked so concurrent writers
+/// cannot allocate the same per-run sequence number.
+pub async fn append_run_event(
+    transaction: &mut Transaction<'_, Postgres>,
+    run_id: Uuid,
+    event_type: &str,
+    payload: Value,
+) -> Result<i64, QueueError> {
+    if !valid_event_type(event_type) {
+        return Err(QueueError::InvalidEventType);
+    }
+
+    let locked: Option<(Uuid, Uuid)> =
+        sqlx::query_as("SELECT id, project_id FROM test_runs WHERE id = $1 FOR UPDATE")
+            .bind(run_id)
+            .fetch_optional(&mut **transaction)
+            .await?;
+    let Some((locked_id, project_id)) = locked else {
+        return Err(QueueError::NotFound);
+    };
+
+    let sequence: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(sequence), 0) + 1 FROM run_events WHERE run_id = $1",
+    )
+    .bind(run_id)
+    .fetch_one(&mut **transaction)
+    .await?;
+
+    sqlx::query(
+        "INSERT INTO run_events (project_id, run_id, sequence, event_type, payload)
+         VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(project_id)
+    .bind(locked_id)
+    .bind(sequence)
+    .bind(event_type)
+    .bind(payload)
+    .execute(&mut **transaction)
+    .await?;
+
+    Ok(sequence)
+}
+
+/// Record one run transition in both streams it belongs to: the run section's
+/// own stream (`run_events`) and the parent job's stream (`job_events`). Every
+/// run lifecycle site uses this so the jobs view and the live Run section
+/// observe the same transition in the same transaction — neither SSE consumer
+/// is a mirror that can silently diverge.
+pub async fn append_run_and_job_event(
+    transaction: &mut Transaction<'_, Postgres>,
+    run_id: Uuid,
+    job_id: Uuid,
+    event_type: &str,
+    payload: Value,
+) -> Result<(), QueueError> {
+    append_run_event(transaction, run_id, event_type, payload.clone()).await?;
+    append_job_event(transaction, job_id, event_type, payload).await?;
+    Ok(())
+}
+
 /// Atomically claim one eligible job. The claim, attempt increment, lease, and
 /// `job.claimed` event commit together before the caller does any work.
 pub async fn claim_job(
@@ -805,8 +866,9 @@ pub async fn promote_due_schedules(
         .await?;
 
         if let Some(run_id) = run_id {
-            append_job_event(
+            append_run_and_job_event(
                 &mut transaction,
+                run_id,
                 schedule.job_id,
                 "run.scheduled",
                 json!({
@@ -930,8 +992,9 @@ pub async fn cancel_schedule(pool: &PgPool, schedule_id: Uuid) -> Result<bool, Q
     .await?;
     let cancelled_runs = runs.len();
     for (run_id, job_id) in runs {
-        append_job_event(
+        append_run_and_job_event(
             &mut transaction,
+            run_id,
             job_id,
             "run.cancelled",
             json!({"runId": run_id, "scheduleId": schedule_id, "reason": "schedule_cancelled"}),
@@ -1033,8 +1096,9 @@ pub async fn claim_due_run(
         return Ok(None);
     };
 
-    append_job_event(
+    append_run_and_job_event(
         &mut transaction,
+        claimed.id,
         claimed.job_id,
         "run.started",
         json!({
@@ -1635,8 +1699,9 @@ pub async fn claim_due_run_fair(
         return Ok(None);
     };
 
-    append_job_event(
+    append_run_and_job_event(
         &mut transaction,
+        claimed.id,
         claimed.job_id,
         "run.started",
         json!({
@@ -1739,8 +1804,9 @@ pub async fn complete_run(
         return Ok(false);
     };
 
-    append_job_event(
+    append_run_and_job_event(
         &mut transaction,
+        completed,
         job_id,
         "run.completed",
         json!({"runId": completed}),
@@ -1815,8 +1881,9 @@ pub async fn fail_run(
         .execute(&mut *transaction)
         .await?;
 
-        append_job_event(
+        append_run_and_job_event(
             &mut transaction,
+            run_id,
             row.job_id,
             "run.failed",
             json!({
@@ -1862,8 +1929,9 @@ pub async fn fail_run(
     .execute(&mut *transaction)
     .await?;
 
-    append_job_event(
+    append_run_and_job_event(
         &mut transaction,
+        run_id,
         row.job_id,
         "run.failed",
         json!({
@@ -1934,8 +2002,9 @@ pub async fn recover_expired_run_leases(
             .execute(&mut *transaction)
             .await?;
 
-            append_job_event(
+            append_run_and_job_event(
                 &mut transaction,
+                row.id,
                 row.job_id,
                 "run.failed",
                 json!({
@@ -1964,8 +2033,9 @@ pub async fn recover_expired_run_leases(
             .execute(&mut *transaction)
             .await?;
 
-            append_job_event(
+            append_run_and_job_event(
                 &mut transaction,
+                row.id,
                 row.job_id,
                 "run.failed",
                 json!({

@@ -245,6 +245,7 @@ export function makePlannedTest(overrides: Partial<PlannedTest> = {}): PlannedTe
     targetRequirements: ["authorized in-scope target"],
     requiresExplicitConfirmation: false,
     rationaleReferences: ["src/server.ts"],
+    configuration: { route: "/api/items" },
     ...overrides,
   };
 }

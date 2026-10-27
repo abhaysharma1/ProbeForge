@@ -18,6 +18,7 @@ import type {
   LoadScenario,
   Plan,
   PlannedTest,
+  RunEvent,
   RunRequest,
   TargetAuthorization,
   TestResult,
@@ -110,6 +111,7 @@ const targetAuthorizationValidator = compiled<TargetAuthorization>("targetAuthor
 const runRequestValidator = compiled<RunRequest>("runRequest");
 const testResultValidator = compiled<TestResult>("testResult");
 const jobEventValidator = compiled<JobEvent>("jobEvent");
+const runEventValidator = compiled<RunEvent>("runEvent");
 
 function issue(path: string, message: string): ValidationIssue {
   return { path, message };
@@ -306,6 +308,17 @@ export function validateJobEvent(value: unknown): ValidationResult<JobEvent> {
   return finish(event, issues);
 }
 
+export function validateRunEvent(value: unknown): ValidationResult<RunEvent> {
+  const result = structural(runEventValidator, value);
+  if (!result.ok) return result;
+
+  const issues: ValidationIssue[] = [];
+  const event = result.value;
+  checkNonNilUuid(event.runId, "/runId", issues);
+  checkSafeJson(event.payload ?? null, "/payload", 0, issues);
+  return finish(event, issues);
+}
+
 /**
  * Validate a raw JSON string, enforcing the payload ceiling before parsing.
  * `JSON.parse` failures produce a stable issue without echoing payload data.
@@ -340,6 +353,7 @@ export const validators = {
   runRequest: validateRunRequest,
   testResult: validateTestResult,
   jobEvent: validateJobEvent,
+  runEvent: validateRunEvent,
 } satisfies Record<string, (value: unknown) => ValidationResult<unknown>>;
 
 export type ValidatorName = keyof typeof validators;

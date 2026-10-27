@@ -56,8 +56,6 @@ export const DEFAULT_PLANNING_LIMITS: PlanningLimits = {
 //   maxLoadScenarios: 5,
 // };
 
-
-
 export function validatePlanningLimits(limits: PlanningLimits): void {
   const entries: Array<[keyof PlanningLimits, number, number, number]> = [
     ["maxModelCalls", limits.maxModelCalls, 1, 20],

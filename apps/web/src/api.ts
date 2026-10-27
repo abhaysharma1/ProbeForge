@@ -1,6 +1,10 @@
 export type ProjectRole = "owner" | "admin" | "collaborator" | "viewer";
 
-import type { LoadProfile, LoadRequest, Risk } from "@probe-forge/contracts";
+import type { LoadProfile, LoadRequest, Risk, RunEvent } from "@probe-forge/contracts";
+
+// The run event envelope is a shared contract; re-export so stream callers do
+// not import from the package directly.
+export type { RunEvent };
 
 export interface AuthUser {
   readonly id: string;
@@ -90,6 +94,13 @@ export interface CatalogEntry {
   readonly requiresExplicitConfirmation: boolean;
   readonly available: boolean;
   readonly availabilityNote: string | null;
+  readonly passive?: boolean | null;
+  readonly mode?: string | null;
+  readonly dependencies?: readonly string[] | null;
+  readonly requiresRepositorySnapshot?: boolean | null;
+  readonly requiresTestAccounts?: boolean | null;
+  readonly configuration?: string | null;
+  readonly safetyLevel?: string | null;
 }
 
 export interface PlannedTest {
@@ -457,6 +468,10 @@ export function rerunJob(jobId: string, csrfToken: string): Promise<Job> {
  */
 export function jobEventsUrl(jobId: string): string {
   return `${API_BASE}/jobs/${encodeURIComponent(jobId)}/events`;
+}
+
+export function runEventsUrl(runId: string): string {
+  return `${API_BASE}/runs/${encodeURIComponent(runId)}/events`;
 }
 
 export type Repository = {

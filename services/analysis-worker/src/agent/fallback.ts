@@ -1,4 +1,5 @@
 import type { LoadScenario, Plan, PlannedTest, Risk } from "@probe-forge/contracts";
+import type { RouteFact } from "../discovery/model";
 import type { PlanningContext } from "./planning-input";
 import { validateCandidatePlan } from "./validate";
 
@@ -22,12 +23,51 @@ const RISK_RANK: Readonly<Record<Risk, number>> = {
   critical: 3,
 };
 
+const MAX_PROBE_ROUTE_LENGTH = 2_000;
+
 function hasControlCharacters(value: string): boolean {
   for (const character of value) {
     const codePoint = character.codePointAt(0);
     if (codePoint !== undefined && (codePoint < 0x20 || codePoint === 0x7f)) return true;
   }
   return false;
+}
+
+/**
+ * Mirrors the adapter-side route contract: an absolute same-origin path with no
+ * query, fragment, backslash, control characters, `..` segments, or empty
+ * segments. Configuration is never allowed to expand the authorized scope.
+ */
+function isSafeProbeRoute(path: string): boolean {
+  return (
+    path.length > 0 &&
+    path.length <= MAX_PROBE_ROUTE_LENGTH &&
+    path.startsWith("/") &&
+    !path.startsWith("//") &&
+    !path.includes("//") &&
+    !path.includes("?") &&
+    !path.includes("#") &&
+    !path.includes("\\") &&
+    !path.includes("..") &&
+    !hasControlCharacters(path)
+  );
+}
+
+/**
+ * Selects the same deterministic read-only route that the load fallback uses, so
+ * an adapter-backed test is only proposed when a concrete path was discovered.
+ */
+function selectProbeRoute(context: PlanningContext): RouteFact | null {
+  const route = context.inventory.routes
+    .filter(
+      (candidate) =>
+        candidate.pathKind === "literal" &&
+        candidate.path !== null &&
+        isSafeProbeRoute(candidate.path) &&
+        (candidate.method === "GET" || candidate.method === "HEAD"),
+    )
+    .sort((left, right) => (left.path ?? "").localeCompare(right.path ?? ""))[0];
+  return route ?? null;
 }
 
 function reasonText(reason: FallbackReason): string {
@@ -51,7 +91,18 @@ function reasonText(reason: FallbackReason): string {
   }
 }
 
-function fallbackTest(entry: PlanningContext["catalog"]["entries"][number]): PlannedTest {
+function fallbackTest(
+  context: PlanningContext,
+  entry: PlanningContext["catalog"]["entries"][number],
+): PlannedTest | null {
+  // Every HTTP catalog test is executed against one concrete route. Without a
+  // discovered literal route the test cannot be configured, so it is omitted
+  // rather than persisted as an unexecutable planned test.
+  const route = entry.category === "http" ? selectProbeRoute(context) : null;
+  const probePath = route?.path ?? null;
+  if (entry.category === "http" && probePath === null) {
+    return null;
+  }
   return {
     catalogTestId: entry.id,
     name: entry.name,
@@ -63,6 +114,7 @@ function fallbackTest(entry: PlanningContext["catalog"]["entries"][number]): Pla
       "Adapter-defined evidence recorded by the server for the selected vetted test.",
     targetRequirements: ["authorized in-scope target"],
     requiresExplicitConfirmation: entry.risk === "high",
+    configuration: probePath === null ? {} : { route: probePath },
   };
 }
 
@@ -91,20 +143,8 @@ const LOAD_PROFILES = {
 } as const;
 
 function fallbackLoadScenario(context: PlanningContext): LoadScenario | null {
-  const route = context.inventory.routes
-    .filter(
-      (candidate) =>
-        candidate.pathKind === "literal" &&
-        candidate.path !== null &&
-        candidate.path.startsWith("/") &&
-        !candidate.path.startsWith("//") &&
-        !candidate.path.includes("\\") &&
-        !hasControlCharacters(candidate.path) &&
-        !candidate.path.includes("..") &&
-        (candidate.method === "GET" || candidate.method === "HEAD"),
-    )
-    .sort((left, right) => (left.path ?? "").localeCompare(right.path ?? ""))[0];
-  if (route === undefined || route.path === null) return null;
+  const route = selectProbeRoute(context);
+  if (route === null || route.path === null) return null;
   const path = route.path;
   const name = `Fallback baseline load for ${path}`.slice(0, 160);
   return {
@@ -133,10 +173,15 @@ export function buildFallbackPlan(context: PlanningContext, reason: FallbackReas
   const explanation = reasonText(reason);
   let candidate: Plan;
   if (context.job.goal === "vulnerability_testing") {
+    // Route-less network/static tests remain runnable when discovery found no
+    // literal HTTP route; HTTP entries are dropped rather than persisted as
+    // unexecutable planned tests.
+    const routeAvailable = selectProbeRoute(context) !== null;
     const entries = context.catalog.entries
       .filter(
         (entry) =>
           entry.category !== "load" &&
+          (routeAvailable || entry.category !== "http") &&
           entry.name.length <= 160 &&
           !hasControlCharacters(entry.name),
       )
@@ -146,15 +191,27 @@ export function buildFallbackPlan(context: PlanningContext, reason: FallbackReas
       })
       .slice(0, Math.min(3, context.limits.maxPlannedTests));
     if (entries.length === 0) return null;
+    const plannedTests = entries
+      .map((entry) => fallbackTest(context, entry))
+      .filter((test): test is PlannedTest => test !== null);
+    if (plannedTests.length === 0) return null;
+    const requiredInputs = [
+      "Review and confirm every fallback-selected catalog test before approval.",
+    ];
+    if (plannedTests.length < entries.length) {
+      requiredInputs.push(
+        "Provide a discovered literal HTTP route so adapter-backed tests can be configured.",
+      );
+    }
     candidate = {
       schemaVersion: "1",
       goal: "vulnerability_testing",
       summary:
         "Deterministic fallback plan generated by the server because the configured model was unavailable or its proposal was rejected.",
       confidence: 0.2,
-      plannedTests: entries.map(fallbackTest),
+      plannedTests,
       loadScenarios: [],
-      requiredInputs: ["Review and confirm every fallback-selected catalog test before approval."],
+      requiredInputs,
       limitations: [
         explanation,
         "This fallback did not use model reasoning; applicability must be verified by a human.",

@@ -227,7 +227,7 @@ Legend: `[x]` done with evidence - `[ ]` not done.
 
 **Evidence**
 
-- Catalog: `packages/test-catalog/catalog.json` (schema 1, catalog 0.2.0)
+- Catalog: `packages/test-catalog/catalog.json` (schema 1, catalog 0.3.0)
 - API/domain: `services/api/src/catalog.rs`, `services/api/src/plans.rs`
 - UI: `apps/web/src/PlanReview.tsx`, `apps/web/src/ProjectsView.tsx`
 - Tests: `cargo test --workspace` with command-scoped `DATABASE_URL`; `bun run check:db`; `bun run check` (analysis worker 111 pass / 7 skip; test-catalog 6; web 8; contracts 46)
@@ -466,3 +466,32 @@ rather than a new phase gate.
 - **Re-run terminal jobs** — a failed, cancelled, or expired job can be requeued
   for a fresh attempt from the API and the project view. See
   [D-047](DECISION_LOG.md) and the [report](phases/repositories_rerun_report.md).
+- **Executable adapter configuration** — HTTP catalog tests must carry a
+  discovered route at planning, validation, and run creation, so an empty
+  configuration can no longer become a completed-looking failed run. See
+  [D-048](DECISION_LOG.md) and the
+  [report](phases/15a_execution_configuration_report.md).
+- **Expanded vetted adapter coverage (catalog 0.3.0)** — five additional
+  adapters are executable: TLS baseline (`tls_probe`), bounded authentication
+  rate-limit observation, cookie attributes, passive information disclosure, and
+  pinned-snapshot secret scanning. The execution worker materializes the job's
+  pinned commit with a fixed Git argv and redacts every matched secret span.
+  Dependency scanning and load baseline remain unavailable. See
+  [D-049](DECISION_LOG.md), [EXECUTION_ADAPTERS.md](EXECUTION_ADAPTERS.md), and
+  the [report](phases/16_security_adapter_coverage_report.md).
+- **Run section live reporting** — the runs list and run detail view subscribe
+  to a per-run SSE stream (`GET /api/runs/{runId}/events`, backed by the
+  append-only `run_events` table) with `Last-Event-ID` replay, reflect status
+  and report-ready changes through coalesced server refetches, and surface
+  explicit live/paused notices. Run transitions are dual-written to both the
+  run and job streams in the same transaction; execution (`test.*`,
+  `finding.recorded`) and report (`report.*`) events are new emissions. See
+  [D-050](DECISION_LOG.md), [RESULTS_REPORTS.md](RESULTS_REPORTS.md),
+  [CONTRACTS.md](CONTRACTS.md), and the
+  [report](phases/17_run_section_live_reporting_report.md).
+- **Migration-head readiness** — the API and scheduler `/readyz` now withhold
+  readiness unless every migration compiled into the binary is applied, so a
+  database one migration behind (which previously reported `ready` and then
+  failed run creation with `relation "run_events" does not exist`) is refused
+  traffic instead. See [D-051](DECISION_LOG.md), [DATABASE.md](DATABASE.md), and
+  the [report](phases/17a_run_events_migration_guard_report.md).

@@ -47,6 +47,27 @@ export type JobEventType =
   | "plan.approved"
   | "target.validated"
   | "run.scheduled"
+  | "run.queued"
+  | "run.started"
+  | "run.cancelled"
+  | "run.completed"
+  | "run.failed"
+  | "test.started"
+  | "test.progress"
+  | "test.completed"
+  | "test.failed"
+  | "finding.recorded"
+  | "report.completed"
+  | "report.failed";
+
+/**
+ * Types the run-scoped stream emits. The Run section subscribes to these on
+ * `GET /runs/{run_id}/events`; they are the subset of the job vocabulary that
+ * describes run lifecycle, test execution, and report generation.
+ */
+export type RunEventType =
+  | "run.scheduled"
+  | "run.queued"
   | "run.started"
   | "run.cancelled"
   | "run.completed"
@@ -214,6 +235,15 @@ export interface JobEvent {
   readonly jobId: string;
   readonly sequence: number;
   readonly type: JobEventType;
+  readonly occurredAt: string;
+  readonly payload?: JsonValue;
+}
+
+export interface RunEvent {
+  readonly schemaVersion: "1";
+  readonly runId: string;
+  readonly sequence: number;
+  readonly type: RunEventType;
   readonly occurredAt: string;
   readonly payload?: JsonValue;
 }

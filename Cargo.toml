@@ -5,6 +5,7 @@ members = [
     "crates/load-runner",
     "crates/observability",
     "crates/queue",
+    "crates/static-scanner",
     "crates/target-policy",
     "services/api",
     "services/scheduler",
@@ -35,19 +36,24 @@ probe-forge-execution-worker = { path = "services/execution-worker" }
 probe-forge-load-runner = { path = "crates/load-runner" }
 probe-forge-observability = { path = "crates/observability" }
 probe-forge-queue = { path = "crates/queue" }
+probe-forge-static-scanner = { path = "crates/static-scanner" }
 probe-forge-target-policy = { path = "crates/target-policy" }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
 rpassword = "7.5.4"
+rustls = "0.23.46"
+rustls-native-certs = "0.8.5"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.10.9"
 sqlx = { version = "0.9.0", default-features = false, features = ["chrono", "json", "macros", "migrate", "postgres", "runtime-tokio", "uuid"] }
 subtle = "2.6.1"
 thiserror = "2.0.21"
-tokio = { version = "1.54.1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "1.54.1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-rustls = "0.26.6"
 tower-http = { version = "0.7.1", features = ["limit", "timeout", "trace"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 url = "2.5.8"
 uuid = { version = "1.29.0", features = ["serde", "v4"] }
+x509-parser = "0.18.1"
 zeroize = "1.9.1"

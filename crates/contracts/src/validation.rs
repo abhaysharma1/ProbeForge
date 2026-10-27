@@ -14,7 +14,7 @@ use url::Url;
 use crate::model::{
     CONTRACT_SCHEMA_VERSION, HttpMethod, JobCreation, JobEvent, LoadAssertion,
     LoadAssertionOperator, LoadAssertionSource, LoadExtraction, LoadExtractionSource, LoadProfile,
-    LoadScenario, LoadStopConditions, MAX_CONTRACT_BYTES, Plan, PlannedTest, RunRequest,
+    LoadScenario, LoadStopConditions, MAX_CONTRACT_BYTES, Plan, PlannedTest, RunEvent, RunRequest,
     TargetAuthorization, TargetLimits, TargetScope, TestOutcome, TestResult,
 };
 
@@ -147,6 +147,10 @@ pub fn validate_test_result(value: &Value) -> Result<TestResult, ContractError> 
 
 pub fn validate_job_event(value: &Value) -> Result<JobEvent, ContractError> {
     deserialize_and_validate::<JobEvent>(value)
+}
+
+pub fn validate_run_event(value: &Value) -> Result<RunEvent, ContractError> {
+    deserialize_and_validate::<RunEvent>(value)
 }
 
 fn deserialize_and_validate<T>(value: &Value) -> Result<T, ContractError>
@@ -427,6 +431,21 @@ impl Validate for JobEvent {
         let mut issues = Vec::new();
         check_schema_version(&self.schema_version, &mut issues);
         check_non_nil_uuid(&self.job_id, "/jobId", &mut issues);
+
+        if self.sequence < 1 {
+            issues.push(issue("/sequence", "sequence must be at least 1"));
+        }
+
+        check_safe_json(&self.payload, "/payload", 0, &mut issues);
+        finish(issues)
+    }
+}
+
+impl Validate for RunEvent {
+    fn validate(&self) -> Result<(), Vec<ValidationIssue>> {
+        let mut issues = Vec::new();
+        check_schema_version(&self.schema_version, &mut issues);
+        check_non_nil_uuid(&self.run_id, "/runId", &mut issues);
 
         if self.sequence < 1 {
             issues.push(issue("/sequence", "sequence must be at least 1"));

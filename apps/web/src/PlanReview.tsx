@@ -28,6 +28,18 @@ const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
   timeStyle: "short",
 });
 
+/**
+ * Adapter-backed HTTP tests are executed against one concrete route. This is a
+ * review-time hint only; the API and worker remain authoritative.
+ */
+function hasConfiguredRoute(configuration: unknown): boolean {
+  if (configuration === null || typeof configuration !== "object" || Array.isArray(configuration)) {
+    return false;
+  }
+  const record = configuration as Record<string, unknown>;
+  return typeof record.route === "string" || typeof record.path === "string";
+}
+
 const RISK_LABELS: Record<Risk, string> = {
   low: "Low risk",
   medium: "Medium risk",
@@ -207,6 +219,21 @@ function TestCard({
                     Adapter unavailable
                   </span>
                 )}
+                {catalog.safetyLevel ? (
+                  <span className="rounded-full border border-pf-border-strong bg-pf-surface px-2 py-0.5 text-[10px] font-medium text-pf-text-secondary">
+                    {catalog.safetyLevel === "passive" ? "Passive" : "Bounded active"}
+                  </span>
+                ) : null}
+                {catalog.requiresRepositorySnapshot ? (
+                  <span className="rounded-full border border-pf-border-strong bg-pf-surface px-2 py-0.5 text-[10px] font-medium text-pf-text-secondary">
+                    Pinned snapshot
+                  </span>
+                ) : null}
+                {catalog.configuration === "none" ? (
+                  <span className="rounded-full border border-pf-border-strong bg-pf-surface px-2 py-0.5 text-[10px] font-medium text-pf-text-secondary">
+                    No configuration
+                  </span>
+                ) : null}
               </div>
               <p className="mt-1.5 text-[11px] leading-4 text-pf-text-secondary">
                 {catalog.description}
@@ -239,6 +266,15 @@ function TestCard({
               is updated.
             </p>
           )}
+
+          {catalog?.category === "http" &&
+          catalog.available &&
+          !hasConfiguredRoute(test.configuration) ? (
+            <p className="mt-2 rounded-md border border-[#ead9bd] bg-[#fbf5e9] px-3 py-2 text-[11px] leading-4 text-pf-warning">
+              No route is configured for this HTTP test. Creating runs will fail until the plan is
+              regenerated with a discovered route.
+            </p>
+          ) : null}
 
           <details className="mt-2">
             <summary className="cursor-pointer text-[11px] font-medium text-pf-text-secondary">

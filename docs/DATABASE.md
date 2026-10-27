@@ -25,9 +25,13 @@ string. The test runner sets `PROBE_FORGE_REQUIRE_DB_TESTS=1`, so a missing
 ## Migration policy
 
 Migrations live in `migrations/` and are applied by
-`cargo run -p probe-forge-api --bin migrate`, which uses SQLx's runtime migrator.
+`cargo run -p probe-forge-api --bin migrate`, which uses SQLx's migrator with the
+migration set compiled into that binary. Apply a newer migration by running the
+migrate binary built from the newer commit; the API and scheduler readiness gates
+embed the same set, so a runner and a server cannot disagree about which versions
+are expected.
 
-- **Forward-only.** Migrations are ordered (`0001` through `0017` today) and are never
+- **Forward-only.** Migrations are ordered (`0001` through `0018` today) and are never
   edited after being applied. Fix a mistake with a new migration.
 - **Do not use `sqlx migrate revert` in shared or production environments.** No
   down migrations are maintained. SQLx records applied versions in
@@ -41,7 +45,11 @@ Migrations live in `migrations/` and are applied by
   production edits.
 - **Deployment:** take a backup before a destructive change, apply migrations as
   a separate step from starting application replicas, and never run migrations
-  concurrently from multiple deployment jobs.
+  concurrently from multiple deployment jobs. The API and scheduler `/readyz`
+  withhold readiness (`503 not_ready`) until every migration compiled into the
+  binary is applied (D-051), so a rollout that skips the migration step is
+  visible immediately instead of failing at the first write that needs a new
+  table.
 
 The Phase 2 migrations create the schema from empty state and only use guarded
 DDL (`CREATE`, `ALTER`, constraints, indexes, and functions). Re-running the
@@ -63,6 +71,7 @@ migrator is idempotent because SQLx skips already-applied versions.
 | `0010_target_validation.sql` | `targets` | Verification timestamp, resolved address evidence, and allowed ports |
 | `0011_load_safety.sql` | `load_profiles` | Platform profile maxima and closed stop-condition keys; new/updated rows enforced with `NOT VALID` constraints |
 | `0017_repositories.sql` | `git_sources` | Repository registry: optional `display_name`, `archived_at` removal marker, active-list index |
+| `0018_run_events.sql` | `run_events` | Per-run append-only event stream: per-run sequence, bounded payload, immutable rows; replay cursor for `GET /api/runs/{runId}/events` |
 
 Every project-scoped table carries `project_id` and cascades from `projects`
 except where a deliberate restriction preserves approval/authorization history.

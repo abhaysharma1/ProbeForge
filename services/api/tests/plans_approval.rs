@@ -349,13 +349,13 @@ async fn plan_review_exposes_catalog_metadata_and_tenant_boundaries() {
     assert_eq!(response.body["status"], "proposed");
     assert_eq!(response.body["revision"], 0);
     assert_eq!(response.body["goal"], "vulnerability_testing");
-    assert_eq!(response.body["catalogVersion"], "0.2.0");
+    assert_eq!(response.body["catalogVersion"], "0.3.0");
     let tests = response.body["plannedTests"].as_array().expect("tests");
     assert_eq!(tests.len(), 2);
     assert_eq!(tests[0]["catalogTestId"], "http.headers.missing");
     assert_eq!(tests[0]["catalog"]["available"], true);
     assert!(tests[0]["catalog"]["availabilityNote"].is_string());
-    assert_eq!(tests[1]["catalog"]["available"], false);
+    assert_eq!(tests[1]["catalog"]["available"], true);
     assert_eq!(tests[1]["requiresExplicitConfirmation"], true);
     assert_eq!(tests[0]["selected"], false);
 
@@ -398,7 +398,7 @@ async fn plan_review_exposes_catalog_metadata_and_tenant_boundaries() {
         .send(Method::GET, "/api/test-catalog", Some(&fixture.owner), None)
         .await;
     assert_eq!(response.status, StatusCode::OK, "{:?}", response.body);
-    assert_eq!(response.body["catalogVersion"], "0.2.0");
+    assert_eq!(response.body["catalogVersion"], "0.3.0");
     let entries = response.body["entries"]
         .as_array()
         .expect("catalog entries");
@@ -416,7 +416,8 @@ async fn plan_review_exposes_catalog_metadata_and_tenant_boundaries() {
         .iter()
         .find(|entry| entry["id"] == "static.secrets.exposure")
         .expect("secrets catalog entry");
-    assert_eq!(secrets["available"], false);
+    assert_eq!(secrets["available"], true);
+    assert_eq!(secrets["requiresRepositorySnapshot"], true);
     let load = entries
         .iter()
         .find(|entry| entry["id"] == "load.baseline")
@@ -646,7 +647,7 @@ async fn approval_requires_confirmation_and_writes_an_immutable_snapshot() {
             .fetch_one(&app.pool)
             .await
             .expect("approval snapshot");
-    assert_eq!(snapshot["catalogVersion"], "0.2.0");
+    assert_eq!(snapshot["catalogVersion"], "0.3.0");
     assert_eq!(
         snapshot["tests"].as_array().expect("snapshot tests").len(),
         2

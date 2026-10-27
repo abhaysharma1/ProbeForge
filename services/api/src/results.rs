@@ -6,14 +6,21 @@
 //! hypothesis. Reports are immutable versions in a table separate from results,
 //! so a generation failure cannot destroy test results.
 
+use std::{convert::Infallible, time::Duration};
+
+use async_stream::stream;
 use axum::{
     Extension, Json, Router,
     extract::State,
-    http::{StatusCode, header},
-    response::{IntoResponse, Response},
+    http::{HeaderMap, StatusCode, header},
+    response::{
+        IntoResponse, Response,
+        sse::{Event, KeepAlive, Sse},
+    },
     routing::get,
 };
 use chrono::{DateTime, Utc};
+use futures_core::Stream;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -21,6 +28,7 @@ use sqlx::{FromRow, PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use probe_forge_observability::redact_json;
+use probe_forge_queue::append_run_and_job_event;
 
 use crate::{
     AppState, audit,
@@ -40,6 +48,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/projects/{project_id}/runs", get(list_runs))
         .route("/runs/{run_id}", get(get_run))
+        .route("/runs/{run_id}/events", get(run_events))
         .route(
             "/runs/{run_id}/report",
             get(get_report).post(generate_report),
@@ -563,6 +572,175 @@ async fn get_run(
     let run = load_run_for_user(&state.pool, context.user.id, run_id).await?;
     let detail = load_run_detail(&state.pool, &run).await?;
     Ok(Json(detail))
+}
+
+// ---------------------------------------------------------------------------
+// Run event stream (SSE)
+// ---------------------------------------------------------------------------
+
+const MAX_RUN_EVENT_BATCH: i64 = 200;
+const RUN_EVENT_POLL_INTERVAL: Duration = Duration::from_secs(1);
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RunEventQuery {
+    after: Option<i64>,
+    follow: Option<bool>,
+}
+
+#[derive(Debug, FromRow)]
+struct RunEventRow {
+    sequence: i64,
+    event_type: String,
+    payload: Value,
+    occurred_at: DateTime<Utc>,
+}
+
+/// Statuses that cannot gain new lifecycle, execution, or report events. A
+/// stream is only worth opening while a run can still move; a terminal run has
+/// already drained its last event.
+fn run_is_terminal(status: &str) -> bool {
+    matches!(
+        status,
+        "completed" | "completed_with_report_error" | "failed" | "cancelled" | "expired"
+    )
+}
+
+async fn load_run_event_batch(
+    pool: &PgPool,
+    run_id: Uuid,
+    after: i64,
+    limit: i64,
+) -> Result<Vec<RunEventRow>, sqlx::Error> {
+    sqlx::query_as(
+        r#"
+        SELECT sequence, event_type, payload, occurred_at
+        FROM run_events
+        WHERE run_id = $1 AND sequence > $2
+        ORDER BY sequence ASC
+        LIMIT $3
+        "#,
+    )
+    .bind(run_id)
+    .bind(after)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
+async fn run_status(pool: &PgPool, run_id: Uuid) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar("SELECT status FROM test_runs WHERE id = $1")
+        .bind(run_id)
+        .fetch_optional(pool)
+        .await
+}
+
+fn queue_error(error: probe_forge_queue::QueueError) -> ApiError {
+    match error {
+        probe_forge_queue::QueueError::Database(error) => ApiError::database(error),
+        other => ApiError::internal(other.to_string()),
+    }
+}
+
+/// Live event stream for one run, replayable with `Last-Event-ID` / `after`
+/// exactly like the job stream. PostgreSQL stays authoritative: the stream is a
+/// prompt for the client to refresh, and per-run sequences survive reconnects.
+async fn run_events(
+    State(state): State<AppState>,
+    Extension(context): Extension<AuthContext>,
+    ApiPath(run_id): ApiPath<Uuid>,
+    ApiQuery(query): ApiQuery<RunEventQuery>,
+    headers: HeaderMap,
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
+    // Membership is the authorization gate, checked before the stream opens.
+    load_run_for_user(&state.pool, context.user.id, run_id).await?;
+
+    let header_cursor = match headers.get("last-event-id") {
+        Some(value) => Some(
+            value
+                .to_str()
+                .ok()
+                .and_then(|value| value.trim().parse::<i64>().ok())
+                .filter(|value| *value >= 0)
+                .ok_or_else(|| {
+                    ApiError::invalid(
+                        "invalid_last_event_id",
+                        "Last-Event-ID must be a non-negative integer.",
+                    )
+                })?,
+        ),
+        None => None,
+    };
+    let cursor = header_cursor.or(query.after).unwrap_or(0);
+    if cursor < 0 {
+        return Err(ApiError::invalid(
+            "invalid_after",
+            "after must be a non-negative event sequence.",
+        ));
+    }
+    let follow = query.follow.unwrap_or(true);
+
+    let pool = state.pool.clone();
+    let event_stream = stream! {
+        let mut cursor = cursor;
+        loop {
+            let batch = match load_run_event_batch(&pool, run_id, cursor, MAX_RUN_EVENT_BATCH).await {
+                Ok(batch) => batch,
+                Err(_) => {
+                    yield Ok::<Event, Infallible>(Event::default()
+                        .event("stream.error")
+                        .data(json!({ "code": "event_stream_failed" }).to_string()));
+                    break;
+                }
+            };
+            let batch_len = batch.len();
+            for row in batch {
+                cursor = row.sequence;
+                let data = json!({
+                    "schemaVersion": "1",
+                    "runId": run_id,
+                    "sequence": row.sequence,
+                    "type": row.event_type,
+                    "occurredAt": row.occurred_at,
+                    "payload": row.payload,
+                });
+                let event = Event::default()
+                    .id(row.sequence.to_string())
+                    .event(row.event_type)
+                    .data(data.to_string())
+                    .retry(Duration::from_secs(2));
+                yield Ok::<Event, Infallible>(event);
+            }
+
+            if !follow {
+                if batch_len < MAX_RUN_EVENT_BATCH as usize {
+                    break;
+                }
+                continue;
+            }
+
+            if batch_len == 0 {
+                match run_status(&pool, run_id).await {
+                    Ok(Some(status)) if run_is_terminal(&status) => break,
+                    Ok(None) => break,
+                    Ok(Some(_)) => {}
+                    Err(_) => {
+                        yield Ok::<Event, Infallible>(Event::default()
+                            .event("stream.error")
+                            .data(json!({ "code": "event_stream_failed" }).to_string()));
+                        break;
+                    }
+                }
+                tokio::time::sleep(RUN_EVENT_POLL_INTERVAL).await;
+            }
+        }
+    };
+
+    Ok(Sse::new(event_stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keep-alive"),
+    ))
 }
 
 async fn get_report(
@@ -1217,6 +1395,17 @@ async fn build_and_store_report(
     )
     .await
     .map_err(ApiError::database)?;
+    // The report is now visible from the run stream; the Run section closes
+    // over this event to drop the review gate without a manual refresh.
+    append_run_and_job_event(
+        &mut transaction,
+        run.id,
+        run.job_id,
+        "report.completed",
+        json!({ "reportId": report_id, "reportType": report_type, "version": version }),
+    )
+    .await
+    .map_err(queue_error)?;
     transaction.commit().await.map_err(ApiError::database)?;
 
     load_report_dto(pool, run.id, &report_type)
@@ -1292,6 +1481,15 @@ async fn mark_report_failed(
     )
     .await
     .map_err(ApiError::database)?;
+    append_run_and_job_event(
+        &mut transaction,
+        run.id,
+        run.job_id,
+        "report.failed",
+        json!({ "reportId": report_id, "reportType": report_type, "errorCode": code }),
+    )
+    .await
+    .map_err(queue_error)?;
     transaction.commit().await.map_err(ApiError::database)?;
     tracing::warn!(
         event = "report.failed",

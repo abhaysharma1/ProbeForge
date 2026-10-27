@@ -7,10 +7,10 @@
 //! claimed later by the execution worker. Creation is idempotent per
 //! `(approval, selection)`, so a retried request cannot duplicate work.
 
-use axum::{Extension, Json, Router, extract::State, routing::post};
-use probe_forge_queue::append_job_event;
+use axum::{Extension, Json, Router, extract::State, http::StatusCode, routing::post};
+use probe_forge_queue::append_run_and_job_event;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use sqlx::{FromRow, Postgres, Transaction};
 use tracing::info;
 use uuid::Uuid;
@@ -127,8 +127,8 @@ async fn create_runs(
 
     match goal {
         "vulnerability_testing" => {
-            let planned: Vec<(Uuid,)> = sqlx::query_as(
-                "SELECT id FROM planned_tests
+            let planned: Vec<(Uuid, String, Value)> = sqlx::query_as(
+                "SELECT id, catalog_test_id, configuration FROM planned_tests
                  WHERE plan_id = $1 AND selected AND id = ANY($2)
                  ORDER BY catalog_test_id",
             )
@@ -138,7 +138,28 @@ async fn create_runs(
             .await
             .map_err(ApiError::database)?;
 
-            for (planned_test_id,) in planned {
+            for (planned_test_id, catalog_test_id, configuration) in planned {
+                // An adapter-backed test without a valid route can only fail at
+                // execution time, which would still mark the run completed. Fail
+                // closed here, before any run is queued.
+                if let Err(message) = probe_forge_execution_adapters::validate_configuration(
+                    &catalog_test_id,
+                    &configuration,
+                ) {
+                    tracing::warn!(
+                        event = "run.adapter_configuration_invalid",
+                        plan_id = %plan_id,
+                        catalog_test_id = %catalog_test_id,
+                        "run creation refused: planned test configuration is not executable"
+                    );
+                    return Err(ApiError::new(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "invalid_adapter_configuration",
+                        format!(
+                            "Test {catalog_test_id} cannot run: {message} Regenerate the plan before creating runs."
+                        ),
+                    ));
+                }
                 let key = format!("run:{}:{}", approval.id, planned_test_id);
                 let run_id = insert_run(
                     &mut transaction,
@@ -277,8 +298,9 @@ async fn insert_run(
     .map_err(ApiError::database)?;
 
     if let Some(run_id) = inserted {
-        append_job_event(
+        append_run_and_job_event(
             transaction,
+            run_id,
             input.job_id,
             "run.queued",
             json!({ "runId": run_id, "runType": input.run_type }),
@@ -375,8 +397,9 @@ async fn cancel_run(
     .await
     .map_err(ApiError::database)?;
 
-    append_job_event(
+    append_run_and_job_event(
         &mut transaction,
+        run_id,
         job_id,
         "run.cancelled",
         json!({ "runId": run_id, "cancelledBy": context.user.id }),

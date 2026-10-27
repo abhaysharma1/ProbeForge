@@ -153,6 +153,8 @@ const TOOL_GUIDE = `Available action groups:
 Planning policy:
 - The plan goal must equal the job goal.
 - Vulnerability plans use only vetted catalog tests; load plans use bounded load scenarios.
+- Every HTTP catalog test must include configuration.route with a literal same-origin path returned by discovery_list_routes. Never invent or guess a route, never include query strings, fragments, parameters, or other configuration keys, and omit the test when no suitable discovered route exists.
+- Network (TLS) and static repository catalog tests accept no configuration values; use an empty configuration object. Static tests scan the job's pinned repository snapshot, not a target URL.
 - Load plans use ordered requests discovered from the repository: assign stable lowercase step ids, include method, same-origin path, and at least one expected status.
 - Use secretHeaders only with secret:// references for credentials. Never place a raw Authorization, Cookie, API key, token, or password in a scenario.
 - Use extract rules to capture a response header or JSON pointer, then reference an earlier extraction as \${name} in a later path, header, or body string. dependsOn may only name earlier step ids.

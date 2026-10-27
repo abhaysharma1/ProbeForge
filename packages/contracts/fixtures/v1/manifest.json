@@ -263,6 +263,24 @@
       "valid": true
     },
     {
+      "name": "run started event",
+      "validator": "runEvent",
+      "path": "run-event.valid.json",
+      "valid": true
+    },
+    {
+      "name": "report completed event without payload",
+      "validator": "runEvent",
+      "path": "run-event.report.valid.json",
+      "valid": true
+    },
+    {
+      "name": "run event with a job-only event type",
+      "validator": "runEvent",
+      "path": "run-event.job-type.invalid.json",
+      "valid": false
+    },
+    {
       "name": "unknown event type",
       "validator": "jobEvent",
       "path": "event.type.invalid.json",

@@ -38,10 +38,52 @@ All routes require authentication and project membership; non-members receive
 |---|---|---|
 | GET | `/api/projects/{projectId}/runs` | Run list with status, plan version, timestamps, outcome counts, and report status |
 | GET | `/api/runs/{runId}` | Run summary, per-test results with evidence metadata, recommendations, metric summary, and report metadata |
+| GET | `/api/runs/{runId}/events` | Server-sent run event stream (see below) |
 | GET | `/api/runs/{runId}/report` | Report row, version history, and the latest content |
 | POST | `/api/runs/{runId}/report` | Generate a new immutable report version (viewer forbidden) |
 | GET | `/api/runs/{runId}/report/export?format=json\|markdown` | Export the latest version as JSON or readable Markdown |
 | GET | `/api/runs/{runId}/compare?otherRunId=...` | Compare two runs |
+
+## Run event stream
+
+`GET /api/runs/{runId}/events` returns `text/event-stream`, mirroring the job
+event stream in `JOBS.md`. Events live in the append-only `run_events` table
+with a per-run sequence; the SSE `id` is that sequence, so
+`Last-Event-ID` (automatic on reconnect) and `?after=` replay events greater
+than the cursor, exclusively. `?follow=false` returns the replay and closes the
+finite stream; the default follows until the run reaches a terminal status
+(`completed`, `completed_with_report_error`, `failed`, `cancelled`, `expired`)
+after draining every recorded event, so `report.*` events emitted at the
+terminal tail are still delivered. Cursor validation, membership (`404` for
+non-members), and the safe `stream.error` database-failure event follow the job
+stream contract exactly; PostgreSQL remains authoritative and the stream only
+prompts a client refresh.
+
+Event data is the shared `runEvent` contract envelope:
+
+```text
+id: <sequence>
+event: <event type>
+data: {"schemaVersion":"1","runId":"...","sequence":N,"type":"...","occurredAt":"...","payload":{...}}
+```
+
+Emitted types (the `RunEventType` vocabulary), and where they are written:
+
+- `run.scheduled` — scheduler promotes a due schedule into a queued load run.
+- `run.queued` — operator materializes runs from an approved plan.
+- `run.started` — a worker claims the run.
+- `test.started` / `test.completed` — the execution worker starts and persists
+  the single planned test a run executes.
+- `finding.recorded` — a completed test has a `confirmed` or `suspected`
+  finding; payload describes classification only, never raw evidence.
+- `run.completed`, `run.failed`, `run.cancelled` — lifecycle tail (retries use
+  `run.failed` with `willRetry: true`).
+- `report.completed`, `report.failed` — a report version lands or generation
+  fails with a stable error code.
+
+Every run transition is dual-written to `run_events` and the parent job's
+`job_events` in the same transaction (see `DECISION_LOG.md`), so both live
+views observe the same transition with a single source of truth.
 
 ## Traceability
 

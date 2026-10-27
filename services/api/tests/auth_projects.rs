@@ -603,3 +603,34 @@ async fn readiness_requires_migrated_database() {
     assert_eq!(response.body["service"], "probe-forge-api");
     app.cleanup().await;
 }
+
+/// Regression: a database one migration behind must be reported `not_ready`,
+/// not `ready`. Readiness previously asked only whether *some* migration had
+/// run, so a schema missing `run_events` still passed and run creation failed
+/// with a 500 after plan approval.
+#[tokio::test]
+async fn readiness_fails_when_a_migration_is_pending() {
+    let Some(app) = TestApp::setup().await else {
+        return;
+    };
+
+    // Simulate the pre-0018 schema without touching `public`: the pool is
+    // pinned to this test's isolated schema, where `_sqlx_migrations` lives.
+    let removed = sqlx::query(
+        "DELETE FROM _sqlx_migrations
+         WHERE version = (SELECT max(version) FROM _sqlx_migrations)",
+    )
+    .execute(&app.pool)
+    .await
+    .expect("pending migration simulation failed")
+    .rows_affected();
+    assert_eq!(removed, 1, "the newest migration must exist to remove it");
+
+    let response = app.send(Method::GET, "/readyz", None, None).await;
+    assert_eq!(response.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.body["status"], "not_ready");
+    assert_eq!(response.body["service"], "probe-forge-api");
+
+    // The schema is dropped on cleanup, so the deleted row is not restored.
+    app.cleanup().await;
+}

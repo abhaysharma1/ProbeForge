@@ -1,9 +1,9 @@
-use std::{fmt, net::SocketAddr, time::Duration};
+use std::{collections::BTreeSet, fmt, net::SocketAddr, time::Duration};
 
 use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
 use probe_forge_queue::{RetentionOutcome, RetentionPolicy};
 use serde::Serialize;
-use sqlx::{PgPool, postgres::PgPoolOptions};
+use sqlx::{PgPool, migrate::Migrator, postgres::PgPoolOptions};
 use thiserror::Error;
 use tower_http::{limit::RequestBodyLimitLayer, timeout::TimeoutLayer, trace::TraceLayer};
 use tracing::info;
@@ -203,14 +203,62 @@ async fn healthz() -> Json<Health> {
     })
 }
 
+/// Migration versions compiled into this binary from `migrations/`.
+///
+/// Intentionally mirrors the API's readiness gate: both services must reflect
+/// the same embedded migration set, so a scheduler replicating against a stale
+/// schema withholds readiness instead of promoting runs it cannot record. The
+/// SQL is embedded at compile time, so the runtime image needs no migration
+/// directory and the check cannot drift from the binary's expectations.
+static MIGRATOR: Migrator = sqlx::migrate!("../../migrations");
+
+/// Versions this binary expects that the database has not recorded as applied.
+fn pending_migrations(applied: &BTreeSet<i64>) -> Vec<i64> {
+    let mut pending: Vec<i64> = MIGRATOR
+        .migrations
+        .iter()
+        .map(|migration| migration.version)
+        .filter(|version| !applied.contains(version))
+        .collect();
+    pending.sort_unstable();
+    pending.dedup();
+    pending
+}
+
+/// True only when every migration compiled into this binary is applied.
+/// Fails closed and logs versions only, never the connection string.
+async fn schema_is_current(pool: &PgPool) -> bool {
+    let applied: Vec<i64> =
+        match sqlx::query_scalar::<_, i64>("SELECT version FROM _sqlx_migrations WHERE success")
+            .fetch_all(pool)
+            .await
+        {
+            Ok(versions) => versions,
+            Err(error) => {
+                tracing::warn!(
+                    event = "db.migration_state_unavailable",
+                    error = %error,
+                    "readiness withheld: migration state could not be read"
+                );
+                return false;
+            }
+        };
+
+    let pending = pending_migrations(&applied.into_iter().collect());
+    if pending.is_empty() {
+        return true;
+    }
+    tracing::warn!(
+        event = "db.migrations_pending",
+        pending_versions = ?pending,
+        "readiness withheld: pending migrations must be applied as a separate deployment step"
+    );
+    false
+}
+
 async fn readiness(State(state): State<AppState>) -> (StatusCode, Json<Readiness>) {
     let ready = match &state.pool {
-        Some(pool) => sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS (SELECT 1 FROM _sqlx_migrations WHERE success LIMIT 1)",
-        )
-        .fetch_one(pool)
-        .await
-        .unwrap_or(false),
+        Some(pool) => schema_is_current(pool).await,
         None => false,
     };
 
@@ -520,6 +568,27 @@ mod tests {
         let body = json_body(response).await;
         assert_eq!(body["status"], "ok");
         assert_eq!(body["service"], SERVICE_NAME);
+    }
+
+    #[test]
+    fn pending_migrations_reports_versions_missing_from_the_database() {
+        let mut expected: Vec<i64> = MIGRATOR
+            .migrations
+            .iter()
+            .map(|migration| migration.version)
+            .collect();
+        expected.sort_unstable();
+        assert!(
+            !expected.is_empty(),
+            "the binary must embed at least one migration"
+        );
+
+        assert!(pending_migrations(&expected.iter().copied().collect()).is_empty());
+        assert_eq!(pending_migrations(&BTreeSet::new()), expected);
+
+        let newest = *expected.last().expect("newest migration");
+        let behind: BTreeSet<i64> = expected.iter().copied().filter(|v| *v != newest).collect();
+        assert_eq!(pending_migrations(&behind), vec![newest]);
     }
 
     #[tokio::test]

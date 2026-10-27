@@ -835,6 +835,50 @@
             "plan.approved",
             "target.validated",
             "run.scheduled",
+            "run.queued",
+            "run.started",
+            "run.cancelled",
+            "run.completed",
+            "run.failed",
+            "test.started",
+            "test.progress",
+            "test.completed",
+            "test.failed",
+            "finding.recorded",
+            "report.completed",
+            "report.failed"
+          ]
+        },
+        "occurredAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "payload": {
+          "$ref": "#/$defs/safeJson"
+        }
+      }
+    },
+    "runEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "runId", "sequence", "type", "occurredAt"],
+      "properties": {
+        "schemaVersion": {
+          "const": "1"
+        },
+        "runId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "run.scheduled",
+            "run.queued",
             "run.started",
             "run.cancelled",
             "run.completed",

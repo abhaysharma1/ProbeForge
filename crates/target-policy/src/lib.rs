@@ -624,6 +624,18 @@ fn validate_authority(
     Ok((host, port))
 }
 
+/// Validates only the scheme, host, and port of a target URL, without applying
+/// path scope. TLS/network adapters operate at the host level; they must still
+/// pass the full authority policy (allowed host, allowed port, production HTTPS,
+/// empty credentials) before opening a connection.
+pub fn validate_target_authority(
+    guard: &TargetGuard,
+    value: &Url,
+    policy: &TargetPolicy,
+) -> Result<(), TargetValidationError> {
+    validate_authority(guard, value, policy).map(|_| ())
+}
+
 pub fn validate_request_url(
     guard: &TargetGuard,
     value: &Url,

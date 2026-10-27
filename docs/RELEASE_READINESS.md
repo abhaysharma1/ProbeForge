@@ -15,7 +15,9 @@ inert fixtures and a local mock only; it never contacts a real target.
   authorization.
 - Run materialization from an approved plan plus an active authorization.
 - Execution through vetted adapters (`http.headers.missing`,
-  `http.cors.misconfiguration`) and the constrained native load runner.
+  `http.cors.misconfiguration`, `http.auth.rate-limit`, `http.cookies.insecure`,
+  `http.info-disclosure`, `network.tls.baseline`, `static.secrets.exposure`) and
+  the constrained native load runner.
 - Results, evidence metadata, traceable recommendations, versioned reports,
   rerun comparison, JSON/Markdown export, and a web run view.
 - Observability, per-project quotas, API rate limits, retention, and backup.
@@ -26,6 +28,10 @@ inert fixtures and a local mock only; it never contacts a real target.
   adapters execute.
 - No k6 or external load tool; load generation is the native constrained runner.
 - No secret manager; secret references are validated but not resolved to values.
+  Credentialed repositories cannot be materialized by the execution worker for
+  static adapters and are reported as unavailable instead of scanned.
+- Static adapters require a `git` binary in the execution worker environment and
+  re-materialize the job's pinned commit into a temporary workspace.
 - No autonomous execution: the analysis job loop and the execution dispatch are
   operator-invoked binaries, not background daemons, so a human (or an external
   supervisor) drives each stage.

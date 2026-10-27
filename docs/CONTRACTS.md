@@ -41,6 +41,7 @@ the shared fixture manifest is the drift guard between the two validators.
 | `runRequest` | Approved plan version, selected tests/scenarios, target authorization, idempotency key |
 | `testResult` | Outcome, severity, confidence, bounded evidence metadata |
 | `jobEvent` | Ordered SSE/replay event envelope; includes `job.queued`, `job.claimed`, `job.retry_scheduled`, `job.failed`, and `job.cancelled` |
+| `runEvent` | Run-scoped SSE/replay event envelope (`GET /api/runs/{runId}/events`); the run lifecycle, execution, and report subset of the job vocabulary (`run.*`, `test.*`, `finding.recorded`, `report.*`) |
 
 Enum values are closed. In particular, only the two job goals are accepted; an
 unknown goal fails schema validation and the database check constraint.
@@ -143,6 +144,17 @@ existing `job.queued`, `job.failed`, and `job.cancelled` remain valid. A shared
 Rust/TypeScript fixture (`event.claimed.valid.json`) verifies the new enum value
 in both validators.
 
+## Run API and SSE
+
+`GET /api/runs/{runId}/events` emits the run section's own `text/event-stream`
+with the same cursor semantics (`Last-Event-ID`, `?after=`, `?follow=false`,
+terminal-status close). Event data is the `runEvent` contract shape;
+shared Rust/TypeScript fixtures (`run-event.*.json`) verify the envelope and its
+restricted vocabulary — a `job.*` type is rejected there even though the parent
+job stream still hears about run transitions through dual-written `run.*` events.
+`run.queued` joined the shared event vocabulary alongside `run.scheduled` because
+the backend has always emitted it when operator-created runs enter the queue.
+
 ## Target authorization API
 
 Phase 9 exposes project-scoped target management:
@@ -170,7 +182,7 @@ unchanged; target registration and validation add server-owned policy.
 The v1 plan payload remains read-only after generation. Phase 8 adds selection and
 approval endpoints around it:
 
-- `GET /api/test-catalog` returns the embedded schema 1 / catalog 0.2.0 entries
+- `GET /api/test-catalog` returns the embedded schema 1 / catalog 0.3.0 entries
   with adapter availability.
 - `GET /api/jobs/{jobId}/plan` and `GET /api/plans/{planId}` return the plan,
   catalog metadata, selected flags, revision, and approval summary.
@@ -209,7 +221,9 @@ call it at run creation and percent-encode extracted values before substitution.
 
 The Phase 1 liveness/readiness shape remains in `packages/contracts/src/index.ts`
 and is still mirrored in Rust (D-010). The API and scheduler now require
-`DATABASE_URL`: their `/readyz` endpoints verify that migrations have been
-recorded and return `503 not_ready` when the database is unavailable or
-unmigrated. The execution worker and analysis worker remain static until their
-own DB-backed phases.
+`DATABASE_URL`: their `/readyz` endpoints compare the applied schema against the
+migrations compiled into the binary (D-051) and return `503 not_ready` when the
+database is unavailable, unreadable, or missing any of those migrations. A
+database that is one migration behind is therefore never reported `ready`. The
+execution worker and analysis worker remain static until their own DB-backed
+phases.

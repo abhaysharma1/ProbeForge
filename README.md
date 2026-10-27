@@ -57,8 +57,8 @@ crates/execution-adapters/ Native, typed security adapters and catalog-to-adapte
 crates/queue/              Shared PostgreSQL job/run queue, leases, fences, retries, recovery
 crates/target-policy/      Shared target URL/DNS/IP, redirect, request-budget, and guarded HTTP policy
 packages/contracts/        JSON Schema, TS contracts, Ajv validators, shared fixtures
-packages/test-catalog/     Versioned, non-executable test catalog (schema 1, catalog 0.2.0)
-migrations/                Forward-only PostgreSQL migrations (0001-0011)
+packages/test-catalog/     Versioned, non-executable test catalog (schema 1, catalog 0.3.0)
+migrations/                Forward-only PostgreSQL migrations (0001-0018)
 infra/local/               Docker Compose for local PostgreSQL
 scripts/                   Repository contract check, database check, and local service runner
 docs/                      Normative project documents, contracts/database docs, and phase reports
@@ -174,8 +174,8 @@ full connect → approve → target → run → report workflow.
 - Pi planning is implemented as an analysis-worker library (`services/analysis-worker/src/agent/`) with a constrained read-only/proposal tool registry, strict v1 validation, deterministic fallback, and a narrow PostgreSQL plan writer. It consumes the Phase 5 snapshot and Phase 6 inventory, and the control plane now exposes authenticated plan review/approval APIs. It is still not wired to an authenticated worker claim/dispatch path; the worker HTTP surface remains health-only.
 - Plans can be reviewed, selected, and approved with an immutable snapshot. Targets can be registered, validated against server-owned URL/DNS/IP policy, and authorized for a bounded time window. Run creation and dispatch remain absent; reporting is Phase 13.
 - Target management is API-only for now; there is no target registration or authorization UI. The guarded HTTP client and run budget are used by the Phase 10 native adapters and the Phase 12 load runner, but no real scan or load test is executed.
-- The catalog contains inert entries (catalog 0.2.0). Only `http.headers.missing` and `http.cors.misconfiguration` have vetted native adapters (`http_probe` 0.1.0); every other entry is reported unavailable. Approval records the selected test set and does not start a run.
-- The Phase 10 adapter library (`crates/execution-adapters`) returns normalized, sanitized in-memory results. It is not dispatched by the worker, not persisted, and has no UI. No shell or external executable is used.
+- The catalog contains inert entries (catalog 0.3.0). Seven entries have vetted native adapters: `http.headers.missing`, `http.cors.misconfiguration`, `http.auth.rate-limit`, `http.cookies.insecure`, `http.info-disclosure` (`http_probe` 0.1.0), `network.tls.baseline` (`tls_probe` 0.1.0), and `static.secrets.exposure` (`static_secret_scanner` 0.1.0). `static.dependencies.known-vulnerable` and `load.baseline` remain unavailable. Approval records the selected test set and does not start a run.
+- The Phase 10 adapter library (`crates/execution-adapters`) returns normalized, sanitized in-memory results. The execution worker dispatches it and persists results/evidence (Phase 13). Network adapters run in-process through the guarded client or a bounded TLS probe; static adapters scan a server-owned pinned snapshot materialized by a fixed-argv Git helper. No shell or model-supplied path/executable is used.
 - Phase 11 load scenarios are ordered, correlated, data-only steps with secret-backed headers, extraction/assertion rules, explicit statuses, and platform-capped profiles. They can be generated and approved without sending traffic.
 - Phase 12 adds a constrained native load runner (`crates/load-runner`) that executes a typed `RunnerSpec` under hard caps with extraction/assertion rules, correlation, metrics, stop conditions, and cancellation. k6 is not installed or invoked; a future adapter must consume the same spec behind a pinned process boundary. The execution worker stays health-only, so no API or UI starts live traffic yet.
 - Schedules persist a normalized timezone and a UTC `next_run_at`, are promoted idempotently per occurrence, and require an explicit active target authorization. Schedule creation is a server library operation; there is no schedule API or UI yet.

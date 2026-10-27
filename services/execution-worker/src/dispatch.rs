@@ -9,7 +9,8 @@
 use std::sync::Arc;
 
 use probe_forge_execution_adapters::{
-    AdapterEnvironment, AdapterResult, ExecutionStatus, SecurityOutcome, execute,
+    AdapterEnvironment, AdapterExtensions, AdapterResult, ExecutionStatus, RepositorySnapshot,
+    SecurityOutcome, execute, metadata_for, requires_repository_snapshot,
 };
 use probe_forge_load_runner::{
     LoadCaps, LoadRunError, NoSecretResolver, RunStatus, budget_for, build_runner_spec,
@@ -22,7 +23,9 @@ use sha2::{Digest, Sha256};
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
-use probe_forge_queue::{ClaimedRun, QueueError, claim_due_run_fair, complete_run, fail_run};
+use probe_forge_queue::{
+    ClaimedRun, QueueError, append_run_and_job_event, claim_due_run_fair, complete_run, fail_run,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum DispatchError {
@@ -76,6 +79,7 @@ pub struct DispatchedRun {
 
 #[derive(Debug, FromRow)]
 struct RunRow {
+    job_id: Uuid,
     run_type: String,
     project_id: Uuid,
     planned_test_id: Option<Uuid>,
@@ -127,7 +131,7 @@ async fn execute_claimed(
     claimed: &ClaimedRun,
 ) -> Result<&'static str, DispatchError> {
     let run: RunRow = sqlx::query_as(
-        "SELECT run_type, project_id, planned_test_id, load_scenario_id, target_authorization_id
+        "SELECT job_id, run_type, project_id, planned_test_id, load_scenario_id, target_authorization_id
          FROM test_runs WHERE id = $1",
     )
     .bind(claimed.id)
@@ -150,6 +154,7 @@ async fn execute_claimed(
             execute_vulnerability(
                 pool,
                 claimed.id,
+                run.job_id,
                 run.project_id,
                 planned_test_id,
                 environment,
@@ -209,6 +214,7 @@ async fn execute_claimed(
 async fn execute_vulnerability(
     pool: &PgPool,
     run_id: Uuid,
+    job_id: Uuid,
     project_id: Uuid,
     planned_test_id: Uuid,
     environment: Environment,
@@ -223,12 +229,50 @@ async fn execute_vulnerability(
             .await?
             .ok_or(DispatchError::Invalid("planned test is missing"))?;
 
+    // Announce the single test this run executes so a live Run section can show
+    // in-flight work between `run.started` and the eventual result.
+    emit_test_started(pool, run_id, &catalog_test_id).await?;
+
+    // Static adapters scan the job's pinned commit. The worker materializes the
+    // snapshot itself; a plan or model can never supply a filesystem path.
+    let snapshot_guard = if requires_repository_snapshot(&catalog_test_id) {
+        match crate::snapshot::materialize_pinned_snapshot(pool, project_id, job_id).await {
+            Ok(snapshot) => Some(snapshot),
+            Err(error) => {
+                tracing::warn!(
+                    run_id = %run_id,
+                    catalog_test_id = %catalog_test_id,
+                    error_code = error.code(),
+                    "repository snapshot could not be materialized for a static adapter"
+                );
+                let result = snapshot_failure_result(&catalog_test_id, &error);
+                persist_result(pool, project_id, run_id, &result).await?;
+                return Ok("completed");
+            }
+        }
+    } else {
+        None
+    };
+    let snapshot = match snapshot_guard.as_ref() {
+        Some(snapshot) => match RepositorySnapshot::new(snapshot.root().to_path_buf()) {
+            Ok(snapshot) => Some(snapshot),
+            Err(_) => {
+                return Err(DispatchError::Invalid(
+                    "repository_snapshot_workspace_invalid",
+                ));
+            }
+        },
+        None => None,
+    };
+
     let adapter_environment = AdapterEnvironment {
         guard: TargetGuard { environment, scope },
         policy: policy.clone(),
         resolver: Arc::new(SystemResolver),
+        snapshot,
     };
     let budget = RunBudget::new(limits, &policy);
+
     let outcome = execute(
         &catalog_test_id,
         adapter_environment,
@@ -243,6 +287,33 @@ async fn execute_vulnerability(
         ExecutionStatus::Cancelled => "cancelled",
         _ => "completed",
     })
+}
+
+fn snapshot_failure_result(
+    catalog_test_id: &str,
+    error: &crate::snapshot::SnapshotError,
+) -> AdapterResult {
+    let metadata = metadata_for(catalog_test_id);
+    AdapterResult {
+        catalog_test_id: catalog_test_id.to_owned(),
+        adapter_name: metadata
+            .as_ref()
+            .map(|metadata| metadata.adapter_name.to_owned())
+            .unwrap_or_else(|| "repository_snapshot".to_owned()),
+        adapter_version: metadata
+            .as_ref()
+            .map(|metadata| metadata.adapter_version.to_owned())
+            .unwrap_or_else(|| "0.1.0".to_owned()),
+        execution_status: ExecutionStatus::Failed,
+        security_outcome: SecurityOutcome::Inconclusive,
+        severity: None,
+        confidence: 0.0,
+        summary: error.safe_message().to_owned(),
+        duration_ms: 0,
+        evidence: Vec::new(),
+        error_code: Some(error.code().to_owned()),
+        extensions: AdapterExtensions::default(),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -323,6 +394,14 @@ async fn persist_result(
     run_id: Uuid,
     result: &AdapterResult,
 ) -> Result<(), DispatchError> {
+    let job_id: Option<Uuid> = sqlx::query_scalar("SELECT job_id FROM test_runs WHERE id = $1")
+        .bind(run_id)
+        .fetch_optional(pool)
+        .await?;
+    let Some(job_id) = job_id else {
+        return Err(DispatchError::Invalid("run disappeared before persisting"));
+    };
+
     let (outcome, finding_status, severity) = classify(result);
     let details = redact(serde_json::to_value(result).unwrap_or(Value::Null));
     let observation = redact(json!({
@@ -331,6 +410,10 @@ async fn persist_result(
     }));
     let confidence = (result.confidence.clamp(0.0, 1.0) * 100.0).round() / 100.0;
     let duration_ms = i32::try_from(result.duration_ms.min(3_600_000)).unwrap_or(3_600_000);
+
+    // The result rows and their stream events commit together: a reader either
+    // sees the result with its completion event or neither.
+    let mut transaction = pool.begin().await?;
 
     let result_id: Uuid = sqlx::query_scalar(
         r#"
@@ -367,7 +450,7 @@ async fn persist_result(
     .bind(&result.adapter_name)
     .bind(&result.adapter_version)
     .bind(duration_ms)
-    .fetch_one(pool)
+    .fetch_one(&mut *transaction)
     .await?;
 
     for (index, evidence) in result.evidence.iter().enumerate() {
@@ -384,9 +467,75 @@ async fn persist_result(
         .bind(format!("evidence/{run_id}/{index}/{hash}"))
         .bind(&hash)
         .bind(i64::try_from(serialized.len()).unwrap_or(0))
-        .execute(pool)
+        .execute(&mut *transaction)
         .await?;
     }
+
+    // Confirmations and suspicions are hypotheses until reviewed; the event is
+    // navigational evidence, never proof, and its payload carries nothing
+    // sensitive (counts and classification only).
+    append_run_and_job_event(
+        &mut transaction,
+        run_id,
+        job_id,
+        "test.completed",
+        json!({
+            "runId": run_id,
+            "resultId": result_id,
+            "catalogTestId": result.catalog_test_id,
+            "outcome": outcome,
+        }),
+    )
+    .await?;
+    if matches!(finding_status, Some("confirmed" | "suspected")) {
+        append_run_and_job_event(
+            &mut transaction,
+            run_id,
+            job_id,
+            "finding.recorded",
+            json!({
+                "runId": run_id,
+                "resultId": result_id,
+                "findingStatus": finding_status,
+                "severity": severity,
+            }),
+        )
+        .await?;
+    }
+
+    transaction.commit().await?;
+    Ok(())
+}
+
+/// Emit `test.started` for the one planned test this run executes. Kept in a
+/// standalone transaction because execution itself must never hold the run
+/// row's lock; the lease already fences concurrent claims.
+async fn emit_test_started(
+    pool: &PgPool,
+    run_id: Uuid,
+    catalog_test_id: &str,
+) -> Result<(), DispatchError> {
+    let job_id: Option<Uuid> = sqlx::query_scalar("SELECT job_id FROM test_runs WHERE id = $1")
+        .bind(run_id)
+        .fetch_optional(pool)
+        .await?;
+    let Some(job_id) = job_id else {
+        return Err(DispatchError::Invalid("run disappeared before execution"));
+    };
+
+    let mut transaction = pool.begin().await?;
+    append_run_and_job_event(
+        &mut transaction,
+        run_id,
+        job_id,
+        "test.started",
+        json!({
+            "runId": run_id,
+            "catalogTestId": catalog_test_id,
+        }),
+    )
+    .await?;
+    transaction.commit().await?;
     Ok(())
 }
 

@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "1",
+  "runId": "44444444-4444-4444-8444-444444444444",
+  "sequence": 1,
+  "type": "run.started",
+  "occurredAt": "2026-10-23T12:00:00Z",
+  "payload": {
+    "runId": "44444444-4444-4444-8444-444444444444",
+    "runType": "load_testing",
+    "attempt": 1
+  }
+}

@@ -12,7 +12,7 @@ Phase 9/run creation will define that transition.
 ## Versioned test catalog
 
 `packages/test-catalog/catalog.json` is the server-owned catalog. Schema version
-`1`, catalog version `0.2.0`, and stable lowercase IDs are embedded by both the
+`1`, catalog version `0.3.0`, and stable lowercase IDs are embedded by both the
 TypeScript worker and the Rust API.
 
 Each entry contains:
@@ -116,6 +116,11 @@ The plan becomes `approved`; older proposed plans for the same job become
 foreign key from `(plan_approval_id, plan_id, plan_version)` to the matching
 approval. A run cannot cite an approval for another plan or version.
 
+Run creation revalidates each selected test's adapter configuration before any
+run is inserted. A plan whose HTTP test lacks a safe `route` or `path` returns
+`422 invalid_adapter_configuration` and queues nothing; regenerate the plan
+instead of editing the approval snapshot.
+
 ## Optimistic concurrency
 
 `test_plans.revision` starts at zero and increments on each selection change.
@@ -137,8 +142,8 @@ The review shows:
 - plan summary, confidence, catalog version, provider/model, required inputs, and
   limitations;
 - each planned test with rationale, risk label, prerequisites, target
-  requirements, expected evidence, configuration, catalog metadata, and
-  unavailable adapter/tool warnings;
+  requirements, expected evidence, configuration, catalog metadata, unavailable
+  adapter/tool warnings, and a missing-route warning for available HTTP tests;
 - load scenarios with method/path, expected statuses, sizing, ramp, duration,
   request caps, and credential reference;
 - a review sidebar with selected counts, save, explicit confirmation, and approve

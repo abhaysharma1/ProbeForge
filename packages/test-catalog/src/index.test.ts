@@ -15,7 +15,7 @@ const validEntry = {
   requiresExplicitConfirmation: false,
 };
 
-function catalogWith(entry: unknown, version = "0.2.0") {
+function catalogWith(entry: unknown, version = "0.3.0") {
   return {
     schemaVersion: "1",
     catalogVersion: version,
@@ -26,7 +26,7 @@ function catalogWith(entry: unknown, version = "0.2.0") {
 describe("bundled catalog", () => {
   it("loads as versioned schema 1 with complete bounded entries", () => {
     expect(testCatalog.schemaVersion).toBe("1");
-    expect(testCatalog.catalogVersion).toBe("0.2.0");
+    expect(testCatalog.catalogVersion).toBe("0.3.0");
     expect(testCatalog.entries.length).toBeGreaterThan(0);
     for (const entry of testCatalog.entries) {
       expect(entry.id).toMatch(/^[a-z0-9][a-z0-9.-]+$/);
@@ -68,7 +68,7 @@ describe("catalog validation", () => {
     expect(() =>
       parseTestCatalog({
         schemaVersion: "1",
-        catalogVersion: "0.2.0",
+        catalogVersion: "0.3.0",
         entries: [validEntry, validEntry],
       }),
     ).toThrow(/duplicate stable id/);

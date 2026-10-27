@@ -16,6 +16,7 @@ pub const SERVICE_NAME: &str = "probe-forge-execution-worker";
 pub use probe_forge_load_runner as load_runner;
 
 pub mod dispatch;
+pub mod snapshot;
 
 pub use dispatch::{DispatchConfig, DispatchError, DispatchedRun, dispatch_once};
 
@@ -109,6 +110,14 @@ struct Health {
 struct Readiness {
     status: &'static str,
     service: &'static str,
+    tools: ToolHealth,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ToolHealth {
+    git: &'static str,
+    tls_roots: &'static str,
 }
 
 pub fn router() -> Router {
@@ -132,10 +141,27 @@ async fn healthz() -> Json<Health> {
 }
 
 async fn readiness() -> Json<Readiness> {
-    // Phases 10 and 12 add adapters and the load runner; readiness will then require them.
+    // A missing optional tool degrades static/TLS coverage; it does not stop
+    // HTTP-only dispatch, so the probe stays 200 with an explicit tool status.
+    let git = if crate::snapshot::git_available().await {
+        "available"
+    } else {
+        "unavailable"
+    };
+    let tls_roots = if probe_forge_execution_adapters::tls_root_store_available() {
+        "available"
+    } else {
+        "unavailable"
+    };
+    let status = if git == "available" && tls_roots == "available" {
+        "ready"
+    } else {
+        "degraded"
+    };
     Json(Readiness {
-        status: "ready",
+        status,
         service: SERVICE_NAME,
+        tools: ToolHealth { git, tls_roots },
     })
 }
 
@@ -283,8 +309,13 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
 
         let body = json_body(response).await;
-        assert_eq!(body["status"], "ready");
+        assert!(matches!(
+            body["status"].as_str(),
+            Some("ready" | "degraded")
+        ));
         assert_eq!(body["service"], SERVICE_NAME);
+        assert!(body["tools"]["git"].is_string());
+        assert!(body["tools"]["tlsRoots"].is_string());
     }
 
     #[tokio::test]

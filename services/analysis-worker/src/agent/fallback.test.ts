@@ -22,8 +22,59 @@ describe("buildFallbackPlan", () => {
     ]);
     expect(plan.plannedTests[1]?.requiresExplicitConfirmation).toBe(true);
     expect(plan.plannedTests.some((test) => test.name === "High risk check")).toBe(true);
+    expect(plan.plannedTests.map((test) => test.configuration)).toEqual([
+      { route: "/api/items" },
+      { route: "/api/items" },
+    ]);
     expect(plan.requiredInputs.join(" ")).toContain("Explicit authorization");
     expect(plan.requiredInputs.join(" ")).toContain("fallback-selected");
+    expect(validateCandidatePlan(plan, context).ok).toBe(true);
+  });
+
+  it("omits adapter-backed tests when no literal route was discovered", () => {
+    const context = makeContext({
+      routes: [makeRoute({ pathKind: "parameterized", path: "/api/items/:id" })],
+    });
+    expect(buildFallbackPlan(context, "model_unavailable")).toBeNull();
+  });
+
+  it("configures network tests with an empty configuration object", () => {
+    const context = makeContext({
+      catalog: makeCatalog([
+        makeCatalogEntry({
+          id: "network.tls.baseline",
+          name: "TLS baseline configuration",
+          category: "network",
+          risk: "medium",
+          toolRequirements: ["tls_probe>=0.1"],
+        }),
+      ]),
+    });
+    const plan = buildFallbackPlan(context, "model_unavailable");
+    expect(plan).not.toBeNull();
+    if (plan === null) return;
+    expect(plan.plannedTests[0]?.configuration).toEqual({});
+    expect(validateCandidatePlan(plan, context).ok).toBe(true);
+  });
+
+  it("keeps route-less network tests when no literal HTTP route exists", () => {
+    const context = makeContext({
+      routes: [makeRoute({ pathKind: "parameterized", path: "/api/items/:id" })],
+      catalog: makeCatalog([
+        makeCatalogEntry(),
+        makeCatalogEntry({
+          id: "network.tls.baseline",
+          name: "TLS baseline configuration",
+          category: "network",
+          risk: "medium",
+          toolRequirements: ["tls_probe>=0.1"],
+        }),
+      ]),
+    });
+    const plan = buildFallbackPlan(context, "model_unavailable");
+    expect(plan).not.toBeNull();
+    if (plan === null) return;
+    expect(plan.plannedTests.map((test) => test.catalogTestId)).toEqual(["network.tls.baseline"]);
     expect(validateCandidatePlan(plan, context).ok).toBe(true);
   });
 

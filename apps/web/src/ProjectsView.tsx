@@ -1,4 +1,4 @@
-import type { JobEvent } from "@probe-forge/contracts";
+import type { JobEvent, RunEvent } from "@probe-forge/contracts";
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ApiError,
@@ -10,7 +10,6 @@ import {
   canViewAudit,
   createProject,
   type Job,
-  jobEventsUrl,
   listAudit,
   listJobs,
   listMembers,
@@ -22,12 +21,12 @@ import {
   type RunSummaryEntry,
   rerunJob,
 } from "./api";
-import { isLiveJob, jobStatusForEvent } from "./jobEvents";
+import { isLiveJob, isLiveRun, jobStatusForEvent, runStatusForEvent } from "./jobEvents";
 import { PlanReview } from "./PlanReview";
 import { RepositoriesPanel } from "./RepositoriesPanel";
 import { RunReport } from "./RunReport";
 import { TargetsPanel } from "./TargetsPanel";
-import { useJobEvents } from "./useJobEvents";
+import { useJobEvents, useRunEvents } from "./useJobEvents";
 
 interface ProjectsViewProps {
   readonly user: AuthUser;
@@ -156,6 +155,7 @@ export function ProjectsView({
   const [rerunningId, setRerunningId] = useState<string | null>(null);
   const [jobActionError, setJobActionError] = useState<string | null>(null);
   const [jobStreamError, setJobStreamError] = useState<string | null>(null);
+  const [runStreamError, setRunStreamError] = useState<string | null>(null);
 
   const [runs, setRuns] = useState<RunSummaryEntry[]>([]);
   const [runsLoading, setRunsLoading] = useState(false);
@@ -394,9 +394,90 @@ export function ProjectsView({
   useJobEvents({
     jobIds: activeJobIds,
     enabled: selectedProjectId !== null && selectedRole !== null,
-    urlForJob: jobEventsUrl,
     onEvent: handleJobEvent,
     onStreamError: handleJobStreamError,
+  });
+
+  // Live run progress. While the selected project has runs the worker can still
+  // move, subscribe to each run's own SSE stream and re-read the run list
+  // whenever a lifecycle event implies a status the UI does not already show,
+  // or when a report lands for one of the runs. PostgreSQL remains
+  // authoritative; the stream is only a prompt to refresh.
+  const runsRef = useRef<RunSummaryEntry[]>([]);
+  useEffect(() => {
+    runsRef.current = runs;
+  }, [runs]);
+
+  const activeRunIds = useMemo(
+    () => runs.filter((run) => isLiveRun(run.status)).map((run) => run.id),
+    [runs],
+  );
+
+  const refreshRuns = useCallback(async () => {
+    const projectId = selectedProjectId;
+    if (!projectId) {
+      return;
+    }
+    const generation = detailGeneration.current;
+    try {
+      const next = await listRuns(projectId);
+      if (generation === detailGeneration.current) {
+        setRuns(next);
+        setRunsError(null);
+      }
+    } catch (error) {
+      if (generation !== detailGeneration.current) {
+        return;
+      }
+      const message = handleError(error);
+      if (message) {
+        setRunsError(message);
+      }
+    }
+  }, [selectedProjectId, handleError]);
+
+  // Coalesce bursts of events into at most one in-flight refresh.
+  const runRefreshState = useRef({ inFlight: false, pending: false });
+  const requestRunsRefresh = useCallback(() => {
+    const state = runRefreshState.current;
+    if (state.inFlight) {
+      state.pending = true;
+      return;
+    }
+    state.inFlight = true;
+    void refreshRuns().finally(() => {
+      state.inFlight = false;
+      if (state.pending) {
+        state.pending = false;
+        requestRunsRefresh();
+      }
+    });
+  }, [refreshRuns]);
+
+  const handleRunEvent = useCallback(
+    (runId: string, event: RunEvent) => {
+      const nextStatus = runStatusForEvent(event.type);
+      if (nextStatus !== null) {
+        const current = runsRef.current.find((run) => run.id === runId);
+        if (current && current.status === nextStatus) {
+          return;
+        }
+      }
+      setRunStreamError(null);
+      requestRunsRefresh();
+    },
+    [requestRunsRefresh],
+  );
+
+  const handleRunStreamError = useCallback(() => {
+    setRunStreamError("Live run updates paused. Reopen the project to refresh results.");
+  }, []);
+
+  useRunEvents({
+    runIds: activeRunIds,
+    enabled: selectedProjectId !== null && selectedRole !== null,
+    onEvent: handleRunEvent,
+    onStreamError: handleRunStreamError,
   });
 
   useEffect(() => {
@@ -436,6 +517,7 @@ export function ProjectsView({
     setSelectedRunId(null);
     setJobActionError(null);
     setJobStreamError(null);
+    setRunStreamError(null);
     setRerunningId(null);
     if (!selectedProjectId || !selectedRole) {
       detailGeneration.current += 1;
@@ -1002,8 +1084,19 @@ export function ProjectsView({
                           <h3 id="runs-heading" className="text-[13px] font-semibold">
                             Runs
                           </h3>
-                          <span className="text-[11px] text-pf-text-muted">
-                            {runs.length} {runs.length === 1 ? "run" : "runs"}
+                          <span className="flex items-center gap-2 text-[11px] text-pf-text-muted">
+                            {activeRunIds.length > 0 && !runStreamError ? (
+                              <span className="inline-flex items-center gap-1.5">
+                                <span
+                                  aria-hidden="true"
+                                  className="size-1.5 rounded-full bg-pf-accent"
+                                />
+                                Live updates
+                              </span>
+                            ) : null}
+                            <span>
+                              {runs.length} {runs.length === 1 ? "run" : "runs"}
+                            </span>
                           </span>
                         </div>
                         {runsLoading ? (
@@ -1048,6 +1141,11 @@ export function ProjectsView({
                             ))}
                           </ul>
                         )}
+                        {runStreamError ? (
+                          <p role="status" className="mt-2 text-[11px] text-pf-warning">
+                            {runStreamError}
+                          </p>
+                        ) : null}
                       </section>
 
                       <TargetsPanel

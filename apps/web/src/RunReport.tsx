@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ApiError,
   type ComparisonSide,
@@ -9,10 +9,13 @@ import {
   type RecommendationView,
   type RunComparison,
   type RunDetail,
+  type RunEvent,
   type RunSummaryEntry,
   runReportExportPath,
   type TestResultView,
 } from "./api";
+import { isLiveRun, runStatusForEvent } from "./jobEvents";
+import { useRunEvents } from "./useJobEvents";
 
 interface RunReportProps {
   readonly runId: string;
@@ -160,6 +163,7 @@ export function RunReport({
   const [detail, setDetail] = useState<RunDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [liveError, setLiveError] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
   const [reportBusy, setReportBusy] = useState(false);
   const [siblings, setSiblings] = useState<readonly RunSummaryEntry[]>([]);
@@ -232,6 +236,72 @@ export function RunReport({
       cancelled = true;
     };
   }, [detail, projectId, runId]);
+
+  // Live reporting for this run. Status-implying events (`run.*`) and report
+  // events (`report.*`) trigger a coalesced re-read; the server snapshot stays
+  // authoritative and progress-only events do not churn the results view.
+  const detailRef = useRef<RunDetail | null>(null);
+  useEffect(() => {
+    detailRef.current = detail;
+  }, [detail]);
+
+  const refreshState = useRef({ inFlight: false, pending: false });
+  const requestDetailRefresh = useCallback(() => {
+    const state = refreshState.current;
+    if (state.inFlight) {
+      state.pending = true;
+      return;
+    }
+    state.inFlight = true;
+    void getRun(runId)
+      .then((next) => {
+        setDetail(next);
+        setError(null);
+      })
+      .catch((cause) => {
+        if (cause instanceof ApiError && cause.status === 401) {
+          onSessionExpired();
+          return;
+        }
+        // Keep showing the last authoritative snapshot; the live notice below
+        // reflects stream health rather than a failed load.
+      })
+      .finally(() => {
+        state.inFlight = false;
+        if (state.pending) {
+          state.pending = false;
+          requestDetailRefresh();
+        }
+      });
+  }, [runId, onSessionExpired]);
+
+  const handleRunEvent = useCallback(
+    (streamRunId: string, event: RunEvent) => {
+      if (streamRunId !== runId) {
+        return;
+      }
+      const nextStatus = runStatusForEvent(event.type);
+      const statusChanged =
+        nextStatus !== null && (detailRef.current?.run.status ?? null) !== nextStatus;
+      if (!statusChanged && event.type !== "report.completed" && event.type !== "report.failed") {
+        return;
+      }
+      setLiveError(false);
+      requestDetailRefresh();
+    },
+    [runId, requestDetailRefresh],
+  );
+
+  const live = detail ? isLiveRun(detail.run.status) : false;
+  const runIds = useMemo(() => (live ? [runId] : []), [live, runId]);
+  useRunEvents({
+    runIds,
+    enabled: detail !== null,
+    onEvent: handleRunEvent,
+    onStreamError: () => {
+      setLiveError(true);
+    },
+  });
 
   const report = detail?.report ?? null;
   const claims = useMemo(() => claimsOf(report?.latest?.content), [report]);
@@ -333,10 +403,33 @@ export function RunReport({
             labeled a hypothesis.
           </p>
         </div>
-        <span className="rounded-full border border-pf-border bg-pf-surface px-2.5 py-1 text-[11px] font-medium text-pf-text-secondary">
-          {run.status}
+        <span className="flex items-center gap-2">
+          {live && !liveError ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-pf-border bg-pf-surface px-2.5 py-1 text-[11px] font-medium text-pf-text-muted">
+              <span aria-hidden="true" className="size-1.5 rounded-full bg-pf-accent" />
+              Live updates
+            </span>
+          ) : null}
+          <span className="rounded-full border border-pf-border bg-pf-surface px-2.5 py-1 text-[11px] font-medium text-pf-text-secondary">
+            {run.status}
+          </span>
         </span>
       </div>
+      {live && liveError ? (
+        <div
+          role="status"
+          className="flex flex-wrap items-center gap-3 rounded-lg border border-pf-border bg-pf-surface px-4 py-2.5 text-[11px] text-pf-warning"
+        >
+          <span>Live updates paused. Refresh to check the current status.</span>
+          <button
+            type="button"
+            onClick={requestDetailRefresh}
+            className="h-7 rounded-md border border-pf-border-strong bg-pf-surface px-2.5 text-[10px] font-medium text-pf-text-secondary transition-colors hover:border-pf-text-muted"
+          >
+            Refresh
+          </button>
+        </div>
+      ) : null}
 
       <section
         aria-labelledby="run-summary-heading"

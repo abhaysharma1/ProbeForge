@@ -23,8 +23,7 @@ const MAX_TARGET_REQUIREMENT_LENGTH: usize = 300;
 const MAX_EVIDENCE_EXPECTATION_LENGTH: usize = 500;
 const MAX_TIMEOUT_SECONDS: i32 = 3_600;
 
-const AVAILABLE_NOTE: &str =
-    "A vetted native adapter exists for this catalog ID; run creation is not wired yet.";
+const AVAILABLE_NOTE: &str = "A vetted native adapter is registered for this catalog ID.";
 const UNAVAILABLE_NOTE: &str = "Execution adapter is not implemented yet. Approval records the selected test; it does not start a run.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,6 +81,14 @@ pub struct CatalogEntryDto {
     pub requires_explicit_confirmation: bool,
     pub available: bool,
     pub availability_note: Option<String>,
+    /// Registry-owned capability metadata. `None` when no adapter exists.
+    pub passive: Option<bool>,
+    pub mode: Option<String>,
+    pub dependencies: Option<Vec<String>>,
+    pub requires_repository_snapshot: Option<bool>,
+    pub requires_test_accounts: Option<bool>,
+    pub configuration: Option<String>,
+    pub safety_level: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -203,12 +210,9 @@ fn validate_catalog(catalog: &TestCatalog) -> Result<(), String> {
     Ok(())
 }
 
-fn is_entry_available(entry: &CatalogEntry) -> bool {
-    probe_forge_execution_adapters::is_supported(&entry.id)
-}
-
 fn to_dto(entry: &CatalogEntry) -> CatalogEntryDto {
-    let available = is_entry_available(entry);
+    let metadata = probe_forge_execution_adapters::metadata_for(&entry.id);
+    let available = metadata.is_some();
     CatalogEntryDto {
         id: entry.id.clone(),
         name: entry.name.clone(),
@@ -227,6 +231,27 @@ fn to_dto(entry: &CatalogEntry) -> CatalogEntryDto {
         } else {
             UNAVAILABLE_NOTE.to_owned()
         }),
+        passive: metadata.as_ref().map(|metadata| metadata.passive),
+        mode: metadata.as_ref().map(|metadata| metadata.mode.to_owned()),
+        dependencies: metadata.as_ref().map(|metadata| {
+            metadata
+                .dependencies
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect()
+        }),
+        requires_repository_snapshot: metadata
+            .as_ref()
+            .map(|metadata| metadata.requires_repository_snapshot),
+        requires_test_accounts: metadata
+            .as_ref()
+            .map(|metadata| metadata.requires_test_accounts),
+        configuration: metadata
+            .as_ref()
+            .map(|metadata| metadata.configuration.to_owned()),
+        safety_level: metadata
+            .as_ref()
+            .map(|metadata| metadata.safety_level.to_owned()),
     }
 }
 
@@ -277,40 +302,53 @@ mod tests {
     fn embedded_catalog_is_valid_and_versioned() {
         let catalog = catalog().expect("embedded catalog must be valid");
         assert_eq!(catalog.schema_version, "1");
-        assert_eq!(catalog.catalog_version, "0.2.0");
-        assert!(catalog.entries.len() >= 6);
+        assert_eq!(catalog.catalog_version, "0.3.0");
+        assert!(catalog.entries.len() >= 9);
         assert!(
             catalog
                 .entries
                 .iter()
                 .any(|entry| entry.category == CatalogCategory::Load)
         );
+        assert!(
+            catalog
+                .entries
+                .iter()
+                .any(|entry| entry.category == CatalogCategory::Static)
+        );
+        assert!(
+            catalog
+                .entries
+                .iter()
+                .any(|entry| entry.category == CatalogCategory::Network)
+        );
     }
 
     #[test]
     fn embedded_catalog_reports_adapter_availability_honestly() {
         let dto = catalog_dto().expect("catalog dto");
-        let headers = dto
-            .entries
-            .iter()
-            .find(|entry| entry.id == "http.headers.missing")
-            .expect("headers entry");
-        assert!(headers.available);
-        assert_eq!(headers.availability_note.as_deref(), Some(AVAILABLE_NOTE));
-
-        let cors = dto
-            .entries
-            .iter()
-            .find(|entry| entry.id == "http.cors.misconfiguration")
-            .expect("cors entry");
-        assert!(cors.available);
-
         for entry in &dto.entries {
-            if entry.id == "http.headers.missing" || entry.id == "http.cors.misconfiguration" {
-                continue;
-            }
-            assert!(!entry.available, "{} should be unavailable", entry.id);
-            assert_eq!(entry.availability_note.as_deref(), Some(UNAVAILABLE_NOTE));
+            let supported = probe_forge_execution_adapters::is_supported(&entry.id);
+            assert_eq!(
+                entry.available, supported,
+                "{} availability must follow the adapter registry",
+                entry.id
+            );
+            assert_eq!(
+                entry.availability_note.as_deref(),
+                Some(if supported {
+                    AVAILABLE_NOTE
+                } else {
+                    UNAVAILABLE_NOTE
+                })
+            );
+            assert_eq!(entry.passive.is_some(), supported);
+            assert_eq!(entry.mode.is_some(), supported);
+            assert_eq!(entry.dependencies.is_some(), supported);
+            assert_eq!(entry.requires_repository_snapshot.is_some(), supported);
+            assert_eq!(entry.requires_test_accounts, supported.then_some(false));
+            assert_eq!(entry.configuration.is_some(), supported);
+            assert_eq!(entry.safety_level.is_some(), supported);
         }
 
         for supported in probe_forge_execution_adapters::supported_catalog_ids() {
@@ -319,6 +357,46 @@ mod tests {
                 "adapter {supported} is not present in the catalog"
             );
         }
+
+        let secrets = dto
+            .entries
+            .iter()
+            .find(|entry| entry.id == "static.secrets.exposure")
+            .expect("secrets entry");
+        assert!(secrets.available);
+        assert_eq!(secrets.requires_repository_snapshot, Some(true));
+        assert_eq!(secrets.configuration.as_deref(), Some("none"));
+        assert_eq!(secrets.mode.as_deref(), Some("vulnerability_testing"));
+        assert_eq!(
+            secrets.dependencies.as_deref(),
+            Some(&["git".to_owned()][..])
+        );
+
+        let tls = dto
+            .entries
+            .iter()
+            .find(|entry| entry.id == "network.tls.baseline")
+            .expect("tls entry");
+        assert!(tls.available);
+        assert_eq!(tls.passive, Some(true));
+        assert_eq!(tls.configuration.as_deref(), Some("none"));
+
+        let rate_limit = dto
+            .entries
+            .iter()
+            .find(|entry| entry.id == "http.auth.rate-limit")
+            .expect("rate-limit entry");
+        assert!(rate_limit.available);
+        assert_eq!(rate_limit.passive, Some(false));
+        assert_eq!(rate_limit.safety_level.as_deref(), Some("bounded"));
+
+        let dependencies = dto
+            .entries
+            .iter()
+            .find(|entry| entry.id == "static.dependencies.known-vulnerable")
+            .expect("dependency entry");
+        assert!(!dependencies.available);
+
         assert_eq!(
             find_entry("http.headers.missing")
                 .expect("catalog lookup")

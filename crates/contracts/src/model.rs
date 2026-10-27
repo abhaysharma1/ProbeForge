@@ -129,6 +129,10 @@ pub enum EventType {
     TargetValidated,
     #[serde(rename = "run.scheduled")]
     RunScheduled,
+    /// An operator-created run entering the queue (manual run materialization
+    /// from an approved plan). Scheduler-created runs use `run.scheduled`.
+    #[serde(rename = "run.queued")]
+    RunQueued,
     #[serde(rename = "run.started")]
     RunStarted,
     #[serde(rename = "run.cancelled")]
@@ -151,6 +155,52 @@ pub enum EventType {
     ReportCompleted,
     #[serde(rename = "report.failed")]
     ReportFailed,
+}
+
+/// Types the run-scoped stream emits: run lifecycle, test execution, and
+/// report generation. `GET /runs/{run_id}/events` is gated to this vocabulary;
+/// job.* events about analysis work never appear there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RunEventType {
+    #[serde(rename = "run.scheduled")]
+    RunScheduled,
+    #[serde(rename = "run.queued")]
+    RunQueued,
+    #[serde(rename = "run.started")]
+    RunStarted,
+    #[serde(rename = "run.cancelled")]
+    RunCancelled,
+    #[serde(rename = "run.completed")]
+    RunCompleted,
+    #[serde(rename = "run.failed")]
+    RunFailed,
+    #[serde(rename = "test.started")]
+    TestStarted,
+    #[serde(rename = "test.progress")]
+    TestProgress,
+    #[serde(rename = "test.completed")]
+    TestCompleted,
+    #[serde(rename = "test.failed")]
+    TestFailed,
+    #[serde(rename = "finding.recorded")]
+    FindingRecorded,
+    #[serde(rename = "report.completed")]
+    ReportCompleted,
+    #[serde(rename = "report.failed")]
+    ReportFailed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RunEvent {
+    pub schema_version: String,
+    pub run_id: Uuid,
+    pub sequence: i64,
+    #[serde(rename = "type")]
+    pub event_type: RunEventType,
+    pub occurred_at: DateTime<Utc>,
+    #[serde(default = "empty_object")]
+    pub payload: Value,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

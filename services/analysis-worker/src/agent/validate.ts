@@ -18,7 +18,8 @@ export type PlanValidationCode =
   | "too_many_tests"
   | "too_many_scenarios"
   | "plan_too_large"
-  | "credential_material";
+  | "credential_material"
+  | "invalid_adapter_configuration";
 
 export interface PlanValidationIssue {
   readonly code: PlanValidationCode;
@@ -48,6 +49,8 @@ const LOAD_PATH_INPUT =
   "Confirm that load scenario paths match the authorized deployed target before approval.";
 const PHASE_SEVEN_LIMITATION =
   "Generated statically in Phase 7; no test, target request, or load execution occurred.";
+
+const MAX_ADAPTER_ROUTE_LENGTH = 2_000;
 
 const SECRET_PATTERNS: readonly RegExp[] = [
   /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/,
@@ -150,6 +153,151 @@ function checkCredentialMaterial(
   }
 }
 
+/**
+ * Adapter-backed HTTP tests need a concrete route. This mirrors
+ * `route_from_configuration` in the execution adapters so a plan cannot be
+ * approved with `{}` and only fail once a run is created.
+ */
+function isSafeAdapterRoute(route: string): boolean {
+  if (route.length === 0 || route.length > MAX_ADAPTER_ROUTE_LENGTH) return false;
+  if (!route.startsWith("/") || route.startsWith("//")) return false;
+  if (
+    route.includes("//") ||
+    route.includes("?") ||
+    route.includes("#") ||
+    route.includes("\\") ||
+    route.includes("..")
+  ) {
+    return false;
+  }
+  for (const character of route) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint !== undefined && (codePoint < 0x20 || codePoint === 0x7f)) return false;
+  }
+  return true;
+}
+
+function checkAdapterConfiguration(
+  test: PlannedTest,
+  context: PlanningContext,
+  path: string,
+  issues: PlanValidationIssue[],
+): void {
+  const configuration: unknown = test.configuration;
+  if (
+    configuration === undefined ||
+    configuration === null ||
+    typeof configuration !== "object" ||
+    Array.isArray(configuration)
+  ) {
+    issues.push(
+      issue(
+        "invalid_adapter_configuration",
+        path,
+        "HTTP catalog tests require configuration.route naming a discovered application route",
+      ),
+    );
+    return;
+  }
+
+  const record = configuration as Readonly<Record<string, unknown>>;
+  if (Object.keys(record).some((key) => key !== "route" && key !== "path")) {
+    issues.push(
+      issue("invalid_adapter_configuration", path, "configuration may only contain route or path"),
+    );
+  }
+
+  const routeValue = record.route;
+  const pathValue = record.path;
+  if (routeValue !== undefined && typeof routeValue !== "string") {
+    issues.push(issue("invalid_adapter_configuration", `${path}/route`, "route must be a string"));
+    return;
+  }
+  if (pathValue !== undefined && typeof pathValue !== "string") {
+    issues.push(issue("invalid_adapter_configuration", `${path}/path`, "path must be a string"));
+    return;
+  }
+  if (routeValue === undefined && pathValue === undefined) {
+    issues.push(
+      issue(
+        "invalid_adapter_configuration",
+        path,
+        "HTTP catalog tests require configuration.route naming a discovered application route",
+      ),
+    );
+    return;
+  }
+  if (
+    routeValue !== undefined &&
+    pathValue !== undefined &&
+    routeValue.trim() !== pathValue.trim()
+  ) {
+    issues.push(
+      issue("invalid_adapter_configuration", path, "route and path must name the same route"),
+    );
+    return;
+  }
+
+  const route = (routeValue ?? pathValue ?? "").trim();
+  if (!isSafeAdapterRoute(route)) {
+    issues.push(
+      issue(
+        "invalid_adapter_configuration",
+        `${path}/route`,
+        "route must be a safe absolute path without query, fragment, escapes, or traversal",
+      ),
+    );
+    return;
+  }
+
+  // A truncated inventory cannot prove the route is undiscovered, so only the
+  // safe-path contract is enforced in that case.
+  if (!context.inventory.coverage.routesTruncated) {
+    const discovered = context.inventory.routes.some(
+      (candidate) =>
+        candidate.path === route &&
+        (candidate.pathKind === "literal" || candidate.pathKind === "file-derived"),
+    );
+    if (!discovered) {
+      issues.push(
+        issue(
+          "invalid_adapter_configuration",
+          `${path}/route`,
+          "route must match a discovered application route",
+        ),
+      );
+    }
+  }
+}
+
+function checkEmptyAdapterConfiguration(
+  test: PlannedTest,
+  path: string,
+  issues: PlanValidationIssue[],
+): void {
+  const configuration: unknown = test.configuration;
+  if (configuration === undefined || configuration === null) return;
+  if (typeof configuration !== "object" || Array.isArray(configuration)) {
+    issues.push(
+      issue(
+        "invalid_adapter_configuration",
+        path,
+        "this catalog test accepts no configuration values",
+      ),
+    );
+    return;
+  }
+  if (Object.keys(configuration as Readonly<Record<string, unknown>>).length > 0) {
+    issues.push(
+      issue(
+        "invalid_adapter_configuration",
+        path,
+        "this catalog test accepts no configuration values",
+      ),
+    );
+  }
+}
+
 function checkPlannedTests(
   plan: Plan,
   context: PlanningContext,
@@ -206,6 +354,11 @@ function checkPlannedTests(
             "high-risk tests require explicit confirmation",
           ),
         );
+      }
+      if (catalogEntry.category === "http") {
+        checkAdapterConfiguration(test, context, `${path}/configuration`, issues);
+      } else if (catalogEntry.category === "network" || catalogEntry.category === "static") {
+        checkEmptyAdapterConfiguration(test, `${path}/configuration`, issues);
       }
     }
     if (seen.has(test.catalogTestId)) {

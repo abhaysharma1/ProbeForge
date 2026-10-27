@@ -72,7 +72,7 @@ const PLAN: JobPlan = {
   agentModel: "planner-fixture",
   createdAt: "2026-10-21T10:04:00Z",
   updatedAt: "2026-10-21T10:05:00Z",
-  catalogVersion: "0.2.0",
+  catalogVersion: "0.3.0",
   plannedTests: [
     {
       id: "77777777-7777-4777-8777-777777777777",
@@ -363,6 +363,20 @@ const RUN_DETAIL = {
   },
 };
 
+/** A run the execution worker currently holds, so its streams are live. */
+const RUNNING_RUN = {
+  ...RUN,
+  status: "running",
+  finishedAt: null,
+  reportStatus: null,
+};
+
+const RUNNING_RUN_DETAIL = {
+  ...RUN_DETAIL,
+  run: RUNNING_RUN,
+  report: null,
+};
+
 const ADMIN_SETTINGS = {
   planning: {
     provider: null,
@@ -455,7 +469,9 @@ interface FetchOptions {
   readonly planPatchStatus?: number;
   readonly planApproveStatus?: number;
   readonly runs?: readonly unknown[];
+  readonly runsBox?: { runs: readonly unknown[] };
   readonly runDetail?: unknown;
+  readonly runDetailBox?: { runDetail: unknown };
   readonly targets?: readonly unknown[];
   readonly repositories?: readonly unknown[];
   readonly registeredRepository?: unknown;
@@ -540,7 +556,7 @@ function installFetch(options: FetchOptions) {
     }
 
     if (url.includes("/api/projects/") && url.endsWith("/runs") && method === "GET") {
-      return mockResponse(options.runs ?? []);
+      return mockResponse(options.runsBox ? options.runsBox.runs : (options.runs ?? []));
     }
 
     if (
@@ -549,8 +565,9 @@ function installFetch(options: FetchOptions) {
       !url.includes("/compare") &&
       method === "GET"
     ) {
-      return options.runDetail
-        ? mockResponse(options.runDetail)
+      const runDetail = options.runDetailBox ? options.runDetailBox.runDetail : options.runDetail;
+      return runDetail
+        ? mockResponse(runDetail)
         : mockResponse({ error: { code: "run_not_found", message: "Run not found." } }, 404);
     }
 
@@ -896,6 +913,29 @@ describe("App", () => {
     expect(await screen.findByText(/Approval recorded/)).toBeInTheDocument();
     expect(await screen.findByText("Immutable approval recorded")).toBeInTheDocument();
     expect(await screen.findByText(/Approved by Owner/)).toBeInTheDocument();
+    expect(screen.queryByText(/No route is configured/)).not.toBeInTheDocument();
+  });
+
+  it("warns when an available HTTP test has no configured route", async () => {
+    const plan: JobPlan = {
+      ...PLAN,
+      plannedTests: PLAN.plannedTests.map((test) =>
+        test.catalogTestId === "http.headers.missing" ? { ...test, configuration: {} } : test,
+      ),
+    };
+    await renderSignedIn({
+      session: true,
+      projects: [PROJECT],
+      jobs: [JOB],
+      plan,
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Payments plan review/ }));
+
+    expect(
+      await screen.findByText(/No route is configured for this HTTP test/),
+    ).toBeInTheDocument();
   });
 
   it("reviews correlated load steps and the pinned scenario version", async () => {
@@ -941,6 +981,157 @@ describe("App", () => {
     expect(screen.getByText("HYPOTHESIS")).toBeInTheDocument();
     expect(screen.getByText(/stored reference/)).toBeInTheDocument();
     expect(screen.getByText("https://inert.example.test")).toBeInTheDocument();
+  });
+
+  it("subscribes to a live run's stream and reflects run progress in the list", async () => {
+    const runsBox = { runs: [RUNNING_RUN] as unknown[] };
+    await renderSignedIn({ session: true, projects: [PROJECT], runsBox });
+
+    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
+
+    expect(await screen.findByText("Runs")).toBeInTheDocument();
+
+    // A stream was opened for the active run — per run, not per HTTP request.
+    await waitFor(() => {
+      expect(
+        FakeEventSource.instances.some((instance) =>
+          instance.url.endsWith(`/api/runs/${RUN.id}/events`),
+        ),
+      ).toBe(true);
+    });
+    const stream = FakeEventSource.instances.find((instance) =>
+      instance.url.endsWith(`/api/runs/${RUN.id}/events`),
+    );
+    expect(await screen.findByText(/Running · plan v1/)).toBeInTheDocument();
+
+    // A replayed event that matches the known status does not trigger a refetch
+    // (the fetch mock would otherwise serve the same stale row and flip the
+    // status back) — the code skips refreshes it can already prove unnecessary.
+    act(() => {
+      stream?.emit("run.started", {
+        schemaVersion: "1",
+        runId: RUN.id,
+        sequence: 1,
+        type: "run.started",
+        occurredAt: RUNNING_RUN.createdAt,
+        payload: {},
+      });
+    });
+    expect(await screen.findByText(/Running · plan v1/)).toBeInTheDocument();
+
+    // The worker completes the run; the list re-reads and updates.
+    runsBox.runs = [{ ...RUN, reportStatus: null }];
+    act(() => {
+      stream?.emit("run.completed", {
+        schemaVersion: "1",
+        runId: RUN.id,
+        sequence: 2,
+        type: "run.completed",
+        occurredAt: "2026-10-21T11:02:00Z",
+        payload: {},
+      });
+    });
+
+    expect(await screen.findByText(/Completed · plan v1/)).toBeInTheDocument();
+    // The terminal run left the live set, so its stream closes.
+    await waitFor(() => {
+      expect(stream?.closed).toBe(true);
+    });
+  });
+
+  it("keeps an open run live in the results view and reacts to report events", async () => {
+    const runDetailBox = { runDetail: RUNNING_RUN_DETAIL as unknown };
+    await renderSignedIn({
+      session: true,
+      projects: [PROJECT],
+      runs: [RUNNING_RUN],
+      runDetailBox,
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /View results/ }));
+
+    expect(await screen.findByRole("heading", { name: "Run results" })).toBeInTheDocument();
+    // An active run surfaces its live indicator next to the status pill.
+    expect(await screen.findByText("Live updates")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(
+        FakeEventSource.instances.some((instance) =>
+          instance.url.endsWith(`/api/runs/${RUN.id}/events`),
+        ),
+      ).toBe(true);
+    });
+    // The project view and the results view each hold one stream for this run;
+    // react to events on the results view's stream (created last).
+    const matching = FakeEventSource.instances.filter((instance) =>
+      instance.url.endsWith(`/api/runs/${RUN.id}/events`),
+    );
+    const stream = matching[matching.length - 1];
+
+    // A report landing for this run triggers a coalesced re-read of the detail.
+    runDetailBox.runDetail = { ...RUN_DETAIL };
+    act(() => {
+      stream?.emit("report.completed", {
+        schemaVersion: "1",
+        runId: RUN.id,
+        sequence: 1,
+        type: "report.completed",
+        occurredAt: "2026-10-21T11:03:00Z",
+        payload: {},
+      });
+    });
+
+    // The status pill shows the raw server status; the re-read replaced the
+    // running snapshot with the completed one.
+    expect(await screen.findByText("completed")).toBeInTheDocument();
+    expect(screen.queryByText("running")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Missing security header observed.").length).toBeGreaterThan(0);
+    // The terminal run left the live set: badge gone, stream closed.
+    expect(screen.queryByText("Live updates")).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(stream?.closed).toBe(true);
+    });
+  });
+
+  it("shows a notice when a live run stream stops responding", async () => {
+    const runDetailBox = { runDetail: RUNNING_RUN_DETAIL as unknown };
+    await renderSignedIn({
+      session: true,
+      projects: [PROJECT],
+      runs: [RUNNING_RUN],
+      runDetailBox,
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: /Payments API/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /View results/ }));
+    expect(await screen.findByText("Live updates")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(
+        FakeEventSource.instances.some((instance) =>
+          instance.url.endsWith(`/api/runs/${RUN.id}/events`),
+        ),
+      ).toBe(true);
+    });
+    // React on the results view's stream (the newest one for this run).
+    const matching = FakeEventSource.instances.filter((instance) =>
+      instance.url.endsWith(`/api/runs/${RUN.id}/events`),
+    );
+    const stream = matching[matching.length - 1];
+
+    // Five consecutive transport failures close the stream and surface a notice.
+    act(() => {
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        stream?.fail();
+      }
+    });
+
+    expect(
+      await screen.findByText("Live updates paused. Refresh to check the current status."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeInTheDocument();
+    expect(stream?.closed).toBe(true);
   });
 
   it("adds a repository, then starts an analysis for it", async () => {

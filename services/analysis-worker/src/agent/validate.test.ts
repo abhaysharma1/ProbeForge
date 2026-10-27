@@ -1,10 +1,12 @@
 import { describe, expect, it } from "bun:test";
+import type { PlannedTest } from "@probe-forge/contracts";
 import { DEFAULT_PLANNING_LIMITS } from "./limits";
 import {
   makeCatalog,
   makeCatalogEntry,
   makeContext,
   makePlannedTest,
+  makeRoute,
   makeValidLoadPlan,
   makeValidVulnerabilityPlan,
 } from "./test-helpers";
@@ -25,6 +27,122 @@ describe("validateCandidatePlan", () => {
     expect(result.plan.requiredInputs).toContain(PHASE_SEVEN_REQUIRED_INPUTS.targetAuthorization);
     expect(result.plan.limitations.join(" ")).toContain("no test, target request");
     expect(result.plan.evidenceReferences).toEqual(["src/server.ts"]);
+  });
+
+  it("rejects an HTTP test without a discovered route configuration", () => {
+    const context = makeContext();
+
+    const missing = validateCandidatePlan(
+      makeValidVulnerabilityPlan({
+        plannedTests: [makePlannedTest({ configuration: {} })],
+      }),
+      context,
+    );
+    expect(missing.ok).toBe(false);
+    expect(issueCodes(missing)).toContain("invalid_adapter_configuration");
+
+    const undiscovered = validateCandidatePlan(
+      makeValidVulnerabilityPlan({
+        plannedTests: [makePlannedTest({ configuration: { route: "/admin" } })],
+      }),
+      context,
+    );
+    expect(undiscovered.ok).toBe(false);
+    expect(issueCodes(undiscovered)).toContain("invalid_adapter_configuration");
+
+    const parameterized = makeContext({
+      routes: [makeRoute({ pathKind: "parameterized", path: "/api/items/:id" })],
+    });
+    const dynamic = validateCandidatePlan(
+      makeValidVulnerabilityPlan({
+        plannedTests: [makePlannedTest({ configuration: { route: "/api/items/42" } })],
+      }),
+      parameterized,
+    );
+    expect(dynamic.ok).toBe(false);
+    expect(issueCodes(dynamic)).toContain("invalid_adapter_configuration");
+  });
+
+  it("rejects unsafe or ambiguous adapter configuration", () => {
+    const context = makeContext();
+    const configurations: readonly NonNullable<PlannedTest["configuration"]>[] = [
+      { route: "api/items" },
+      { route: "/api/items?debug=1" },
+      { route: "/api/items#fragment" },
+      { route: "/../admin" },
+      { route: "/api//items" },
+      { route: 7 },
+      { route: "/api/items", path: "/other" },
+      { route: "/api/items", method: "GET" },
+    ];
+    for (const configuration of configurations) {
+      const result = validateCandidatePlan(
+        makeValidVulnerabilityPlan({
+          plannedTests: [makePlannedTest({ configuration })],
+        }),
+        context,
+      );
+      expect(result.ok).toBe(false);
+      expect(issueCodes(result)).toContain("invalid_adapter_configuration");
+    }
+  });
+
+  it("accepts the path alias for a discovered route", () => {
+    const result = validateCandidatePlan(
+      makeValidVulnerabilityPlan({
+        plannedTests: [makePlannedTest({ configuration: { path: "/api/items" } })],
+      }),
+      makeContext(),
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it("requires empty configuration for network and static catalog tests", () => {
+    const context = makeContext({
+      catalog: makeCatalog([
+        makeCatalogEntry({
+          id: "network.tls.baseline",
+          name: "TLS baseline configuration",
+          category: "network",
+          risk: "medium",
+          toolRequirements: ["tls_probe>=0.1"],
+        }),
+        makeCatalogEntry({
+          id: "static.secrets.exposure",
+          name: "Potential secret exposure",
+          category: "static",
+          risk: "high",
+          toolRequirements: ["static_secret_scanner>=0.1"],
+          requiresExplicitConfirmation: true,
+        }),
+      ]),
+    });
+    const tls = makePlannedTest({
+      catalogTestId: "network.tls.baseline",
+      name: "TLS baseline configuration",
+      risk: "medium",
+      configuration: {},
+    });
+    const secrets = makePlannedTest({
+      catalogTestId: "static.secrets.exposure",
+      name: "Potential secret exposure",
+      risk: "high",
+      requiresExplicitConfirmation: true,
+      configuration: {},
+    });
+    const accepted = validateCandidatePlan(
+      makeValidVulnerabilityPlan({ plannedTests: [tls, secrets] }),
+      context,
+    );
+    expect(accepted.ok).toBe(true);
+
+    const routeOnNetwork = validateCandidatePlan(
+      makeValidVulnerabilityPlan({
+        plannedTests: [{ ...tls, configuration: { route: "/api/items" } }],
+      }),
+      context,
+    );
+    expect(issueCodes(routeOnNetwork)).toContain("invalid_adapter_configuration");
   });
 
   it("accepts a bounded load plan and adds load review requirements", () => {

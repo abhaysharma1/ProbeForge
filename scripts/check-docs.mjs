@@ -98,6 +98,8 @@ const REQUIRED_FILES = [
   "migrations/0014_observability.sql",
   "migrations/0015_platform_admin.sql",
   "migrations/0016_planning_custom_provider.sql",
+  "migrations/0017_repositories.sql",
+  "migrations/0018_run_events.sql",
   "packages/contracts/schemas/probeforge.v1.schema.json",
   "packages/contracts/fixtures/v1/manifest.json",
   "services/api/src/bin/migrate.rs",

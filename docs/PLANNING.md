@@ -128,7 +128,9 @@ Fallback is deterministic and uses only server-owned data:
 
 - **Vulnerability fallback:** up to three non-load catalog entries, sorted by
   risk then stable ID. It is marked low confidence (`0.2`) and high-risk entries
-  still require explicit confirmation.
+  still require explicit confirmation. HTTP entries receive
+  `configuration.route` from the first sorted literal `GET` or `HEAD` route and
+  are omitted when no such route exists.
 - **Load fallback:** one conservative profile (2/5/10 virtual users for
   low/standard/high) against the first sorted literal `GET` or `HEAD` route. The
   step has a stable ID and explicit expected statuses. It never contacts the
@@ -141,6 +143,15 @@ Fallback reasons are stable codes: `model_not_configured`, `model_not_found`,
 A model outage does not mark the job failed. The result is either a persisted
 fallback draft or a retryable failure when no safe fallback exists or
 persistence fails. Cancellation returns without creating a plan.
+
+## Executable configuration
+
+Every HTTP catalog test in a vulnerability plan must carry
+`configuration: { "route": "<literal discovered path>" }` (or the equivalent
+`path` alias). The planner must not invent a path, and the worker rejects
+configurations that are missing, ambiguous, unsafe, or not present in the
+discovery inventory. Run creation enforces the adapter contract again, so a
+stale approved plan cannot queue an adapter that would fail immediately.
 
 ## Persistence and versioning
 

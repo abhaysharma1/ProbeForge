@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1",
-  "catalogVersion": "0.2.0",
+  "catalogVersion": "0.3.0",
   "entries": [
     {
       "id": "http.headers.missing",
@@ -54,6 +54,38 @@
       "evidenceExpectations": [
         "Attempt count, response status distribution, and Retry-After headers",
         "Observation window and target route"
+      ],
+      "requiresExplicitConfirmation": false
+    },
+    {
+      "id": "http.cookies.insecure",
+      "name": "Insecure cookie attributes",
+      "category": "http",
+      "risk": "medium",
+      "description": "Inspects Set-Cookie attributes on an authorized route for missing Secure, HttpOnly, and SameSite protections. Cookie values are never recorded.",
+      "prerequisites": ["An authorized target origin", "A discovered route that sets cookies"],
+      "toolRequirements": ["http_probe>=0.1"],
+      "targetRequirements": ["authorized target origin"],
+      "timeoutSeconds": 30,
+      "evidenceExpectations": [
+        "Cookie names and attribute flags only; values are never recorded",
+        "Route path and observation timestamp"
+      ],
+      "requiresExplicitConfirmation": false
+    },
+    {
+      "id": "http.info-disclosure",
+      "name": "Information disclosure",
+      "category": "http",
+      "risk": "medium",
+      "description": "Passively inspects an authorized response for version banners, debug headers, directory listings, and stack-trace markers. Response bodies are not retained.",
+      "prerequisites": ["An authorized target origin", "At least one discovered HTTP route"],
+      "toolRequirements": ["http_probe>=0.1"],
+      "targetRequirements": ["authorized target origin"],
+      "timeoutSeconds": 30,
+      "evidenceExpectations": [
+        "Banner, debug-header, and body-marker identifiers without response bodies",
+        "Route path and observation timestamp"
       ],
       "requiresExplicitConfirmation": false
     },
